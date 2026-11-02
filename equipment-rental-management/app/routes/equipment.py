@@ -75,6 +75,51 @@ def set_equipment_status(equipment_id):
     return jsonify(item.to_dict())
 
 
+@equipment_bp.route("/<int:equipment_id>/deposit", methods=["PATCH"])
+def set_equipment_deposit_flag(equipment_id):
+    """Set whether renting this equipment requires a deposit.
+
+    Rejected with 409 while any unit is rented out, so a rental in progress
+    never changes whether it needed a deposit.
+    """
+    item = store.equipment.get(equipment_id)
+    if item is None:
+        return jsonify({"error": "Equipment not found"}), 404
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("needs_deposit"), bool):
+        return jsonify({"error": "needs_deposit must be true or false"}), 400
+    if not item.set_deposit_flag(data["needs_deposit"]):
+        return jsonify({"error": "Deposit requirement can't change while units are rented out"}), 409
+    return jsonify(item.to_dict())
+
+
+@equipment_bp.route("/deposit/bulk", methods=["POST"])
+def bulk_set_deposit_flag():
+    """Set the deposit requirement on every item in a category.
+
+    Items with units rented out are locked: they are skipped, not changed, and
+    their ids are returned in "skipped" so the caller can tell the user.
+    """
+    data = request.get_json(silent=True)
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("category"), str)
+        or not data["category"].strip()
+        or not isinstance(data.get("needs_deposit"), bool)
+    ):
+        return jsonify({"error": "category must be a non-empty string and needs_deposit must be true or false"}), 400
+
+    updated, skipped = [], []
+    for item in store.equipment.values():
+        if item.category != data["category"]:
+            continue
+        if item.set_deposit_flag(data["needs_deposit"]):
+            updated.append(item.id)
+        else:
+            skipped.append(item.id)
+    return jsonify({"updated": updated, "skipped": skipped})
+
+
 @equipment_bp.route("/<int:equipment_id>/availability", methods=["GET"])
 def get_availability(equipment_id):
     """Return availability summary for a single piece of equipment."""

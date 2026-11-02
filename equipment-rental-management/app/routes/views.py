@@ -29,7 +29,60 @@ def equipment_page():
         )
         store.equipment[equipment_id] = item
         return redirect(url_for("views.equipment_page"))
-    return render_template("equipment.html", equipment=store.equipment.values())
+    return render_equipment_page()
+
+
+def render_equipment_page(error=None, notice=None, status=200):
+    categories = sorted({item.category for item in store.equipment.values()})
+    return render_template(
+        "equipment.html",
+        equipment=store.equipment.values(),
+        categories=categories,
+        error=error,
+        notice=notice,
+    ), status
+
+
+@views_bp.route("/ui/equipment/<int:equipment_id>/deposit", methods=["POST"])
+def set_deposit_flag_page(equipment_id):
+    item = store.equipment.get(equipment_id)
+    if item is None:
+        return redirect(url_for("views.equipment_page"))
+    needs_deposit = request.form.get("needs_deposit")
+    if needs_deposit not in ("true", "false"):
+        return render_equipment_page(error="Choose whether a deposit is required", status=400)
+    if not item.set_deposit_flag(needs_deposit == "true"):
+        return render_equipment_page(
+            error=f"The deposit requirement for {item.name} can't change while units are rented out",
+            status=409,
+        )
+    return redirect(url_for("views.equipment_page"))
+
+
+@views_bp.route("/ui/equipment/deposit/bulk", methods=["POST"])
+def bulk_set_deposit_flag_page():
+    category = request.form.get("category", "")
+    needs_deposit = request.form.get("needs_deposit")
+    if not category.strip() or needs_deposit not in ("true", "false"):
+        return render_equipment_page(error="Choose a category and whether a deposit is required", status=400)
+
+    updated, skipped = [], []
+    for item in store.equipment.values():
+        if item.category != category:
+            continue
+        if item.set_deposit_flag(needs_deposit == "true"):
+            updated.append(item)
+        else:
+            skipped.append(item)
+
+    if not updated and not skipped:
+        notice = f"No equipment found in category {category}"
+    else:
+        notice = f"Updated {len(updated)} item(s) in {category}."
+        if skipped:
+            names = ", ".join(item.name for item in skipped)
+            notice += f" Skipped {len(skipped)} because units are rented out: {names}."
+    return render_equipment_page(notice=notice)
 
 
 @views_bp.route("/ui/equipment/<int:equipment_id>/delete", methods=["POST"])
@@ -61,6 +114,13 @@ def rentals_page():
         renter_id = int(request.form["renter_id"])
         item = store.equipment.get(equipment_id)
         if item is not None:
+            try:
+                deposit_amount = float(request.form.get("deposit_amount") or 0.0)
+            except ValueError:
+                deposit_amount = None  # not a number; flagged items will reject it
+            problem = item.deposit_problem(deposit_amount)
+            if problem is not None:
+                return render_template("rentals.html", rentals=store.rentals.values(), error=problem), 400
             item.available_units -= 1
             rental_id = store.next_id("rental")
             rental = Rental(
@@ -68,6 +128,7 @@ def rentals_page():
                 equipment_id=equipment_id,
                 renter_id=renter_id,
                 due_date=Rental.default_due_date(),
+                deposit_amount=deposit_amount if deposit_amount is not None else 0.0,
             )
             store.rentals[rental_id] = rental
         return redirect(url_for("views.rentals_page"))

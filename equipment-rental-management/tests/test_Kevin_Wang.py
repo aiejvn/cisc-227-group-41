@@ -400,6 +400,540 @@ def test_repeat_add_remove_equipment_cycle(client):
 # =========================== END OF EQUIPMENT TESTS ===========================
 
 
+# ============================== DEPOSIT TESTS ================================
+
+
+def test_needs_deposit_defaults_to_false(client):
+    """
+        New equipment doesn't need a deposit, and the flag is visible on both
+        the create response and a follow-up GET.
+    """
+    data = create_equipment(client)
+    assert data["needs_deposit"] is False
+    assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is False
+
+
+def test_deposit_flag_lock_follows_rented_units():
+    """
+        The flag is locked exactly when some units are rented out, i.e. when
+        available_units differs from total_units.
+    """
+    from app.models.equipment import Equipment
+
+    item = Equipment(id=1, name="Canoe", category="Hiking", total_units=3, available_units=3)
+    assert item.deposit_flag_locked() is False
+
+    item.available_units = 2  # one unit rented
+    assert item.deposit_flag_locked() is True
+
+    item.available_units = 0  # all units rented
+    assert item.deposit_flag_locked() is True
+
+    item.available_units = 3  # everything returned
+    assert item.deposit_flag_locked() is False
+
+
+def create_flagged_equipment(client, **overrides):
+    """Helper: create equipment and turn on needs_deposit through the API."""
+    data = create_equipment(client, **overrides)
+    response = client.patch(f"/equipment/{data['id']}/deposit", json={"needs_deposit": True})
+    assert response.status_code == 200
+    data["needs_deposit"] = True
+    return data
+
+
+def test_toggle_deposit_flag(client):
+    """
+        The flag can be turned on and off.
+    """
+    data = create_equipment(client)
+    url = f"/equipment/{data['id']}/deposit"
+
+    on = client.patch(url, json={"needs_deposit": True})
+    assert on.status_code == 200
+    assert on.get_json()["needs_deposit"] is True
+    assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is True
+
+    off = client.patch(url, json={"needs_deposit": False})
+    assert off.status_code == 200
+    assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is False
+
+
+def test_toggle_deposit_flag_nonexistent_equipment(client):
+    """
+        Toggling a missing item returns 404 with an error message.
+    """
+    response = client.patch("/equipment/999/deposit", json={"needs_deposit": True})
+    assert response.status_code == 404
+    assert "error" in response.get_json()
+
+
+@pytest.mark.parametrize("bad_payload", [
+    {},
+    {"needs_deposit": "yes"},
+    {"needs_deposit": 1},
+    {"needs_deposit": None},
+    {"needs_deposit": INVALID_DICT_VALUE},
+])
+def test_toggle_deposit_flag_invalid_value(client, bad_payload):
+    """
+        Only true or false is accepted; anything else is a 400 and the flag is unchanged.
+    """
+    data = create_equipment(client)
+    response = client.patch(f"/equipment/{data['id']}/deposit", json=bad_payload)
+    assert response.status_code == 400
+    assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is False
+
+
+@pytest.mark.parametrize("start_flagged", [False, True])
+def test_toggle_deposit_flag_locked_while_rented(client, start_flagged):
+    """
+        While a unit is rented out the flag can't change in either direction
+        (409, unchanged), and it becomes changeable again after the return.
+    """
+    data = create_flagged_equipment(client) if start_flagged else create_equipment(client)
+    renter = create_renter(client)
+    url = f"/equipment/{data['id']}/deposit"
+
+    rental = client.post("/rentals", json={
+        "equipment_id": data["id"],
+        "renter_id": renter["id"],
+        "deposit_amount": 10 if start_flagged else 0,
+    })
+    assert rental.status_code == 201
+
+    response = client.patch(url, json={"needs_deposit": not start_flagged})
+    assert response.status_code == 409
+    assert "error" in response.get_json()
+    assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is start_flagged
+
+    # Even setting the flag to its current value is refused while locked
+    assert client.patch(url, json={"needs_deposit": start_flagged}).status_code == 409
+
+    # Returning the unit unlocks it
+    assert client.put(f"/rentals/{rental.get_json()['id']}/return").status_code == 200
+    unlocked = client.patch(url, json={"needs_deposit": not start_flagged})
+    assert unlocked.status_code == 200
+    assert unlocked.get_json()["needs_deposit"] is (not start_flagged)
+
+
+def flags_by_id(client):
+    """Helper: map every equipment id to its needs_deposit flag."""
+    return {e["id"]: e["needs_deposit"] for e in client.get("/equipment").get_json()}
+
+
+def test_bulk_deposit_flag_applies_to_category(client):
+    """
+        Bulk apply flags every item whose category matches exactly, leaves other
+        categories alone, and can be undone.
+    """
+    canoe = create_equipment(client, name="Canoe", category="Hiking")
+    boots = create_equipment(client, name="Boots", category="Hiking")
+    tent = create_equipment(client, name="Tent", category="Camping")
+
+    response = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [canoe["id"], boots["id"]], "skipped": []}
+    assert flags_by_id(client) == {canoe["id"]: True, boots["id"]: True, tent["id"]: False}
+
+    off = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": False})
+    assert off.status_code == 200
+    assert flags_by_id(client) == {canoe["id"]: False, boots["id"]: False, tent["id"]: False}
+
+
+@pytest.mark.parametrize("typed_category", ["hiking", "HIKING", " Hiking", "Hiking "])
+def test_bulk_deposit_flag_category_match_is_exact(client, typed_category):
+    """
+        Category matching is exact: different case or surrounding spaces is a
+        different category, so nothing is changed.
+    """
+    item = create_equipment(client, category="Hiking")
+    response = client.post("/equipment/deposit/bulk", json={"category": typed_category, "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [], "skipped": []}
+    assert flags_by_id(client) == {item["id"]: False}
+
+
+def test_bulk_deposit_flag_skips_locked_items(client):
+    """
+        An item with a unit rented out is skipped and reported; the rest of the
+        category is still updated.
+    """
+    rented = create_equipment(client, name="Canoe", category="Hiking")
+    free = create_equipment(client, name="Boots", category="Hiking")
+    renter = create_renter(client)
+    assert client.post("/rentals", json={
+        "equipment_id": rented["id"], "renter_id": renter["id"],
+    }).status_code == 201
+
+    response = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [free["id"]], "skipped": [rented["id"]]}
+    assert flags_by_id(client) == {rented["id"]: False, free["id"]: True}
+
+
+def test_bulk_deposit_flag_skips_locked_item_already_at_target(client):
+    """
+        The lock has no exception: a locked item is skipped even if it already
+        has the requested value.
+    """
+    item = create_flagged_equipment(client)
+    renter = create_renter(client)
+    assert client.post("/rentals", json={
+        "equipment_id": item["id"], "renter_id": renter["id"], "deposit_amount": 10,
+    }).status_code == 201
+
+    response = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": True})
+    assert response.get_json() == {"updated": [], "skipped": [item["id"]]}
+
+
+def test_bulk_deposit_flag_no_matching_category(client):
+    """
+        A category with no items is a valid request with an empty result.
+    """
+    create_equipment(client, category="Hiking")
+    response = client.post("/equipment/deposit/bulk", json={"category": "Boating", "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [], "skipped": []}
+
+
+@pytest.mark.parametrize("bad_payload", [
+    {},
+    {"needs_deposit": True},                                  # missing category
+    {"category": "Hiking"},                                   # missing needs_deposit
+    {"category": "", "needs_deposit": True},
+    {"category": "   ", "needs_deposit": True},
+    {"category": None, "needs_deposit": True},
+    {"category": 5, "needs_deposit": True},
+    {"category": INVALID_DICT_VALUE, "needs_deposit": True},
+    {"category": "Hiking", "needs_deposit": "yes"},
+    {"category": "Hiking", "needs_deposit": 1},
+    {"category": "Hiking", "needs_deposit": None},
+])
+def test_bulk_deposit_flag_invalid_input(client, bad_payload):
+    """
+        Bad input is a 400 and no item is changed.
+    """
+    create_equipment(client, category="Hiking")
+    response = client.post("/equipment/deposit/bulk", json=bad_payload)
+    assert response.status_code == 400
+    assert set(flags_by_id(client).values()) == {False}
+
+
+def assert_no_rental_created(client, equipment):
+    """Helper: a rejected checkout must leave units and rentals untouched."""
+    assert client.get("/rentals").get_json() == []
+    reread = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert reread["available_units"] == equipment["available_units"]
+
+
+@pytest.mark.parametrize("bad_deposit", [
+    "missing",
+    0,
+    0.0,
+    -5,
+    "abc",
+    None,
+    True,
+    INVALID_DICT_VALUE,
+])
+def test_checkout_flagged_equipment_rejects_bad_deposit(client, bad_deposit):
+    """
+        Flagged equipment needs a deposit greater than 0. A missing, zero,
+        negative, or non-numeric deposit is rejected with a 400 and changes nothing.
+    """
+    equipment = create_flagged_equipment(client)
+    renter = create_renter(client)
+
+    payload = {"equipment_id": equipment["id"], "renter_id": renter["id"]}
+    if bad_deposit != "missing":
+        payload["deposit_amount"] = bad_deposit
+
+    response = client.post("/rentals", json=payload)
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+    assert_no_rental_created(client, equipment)
+
+
+def test_checkout_flagged_equipment_accepts_deposit(client):
+    """
+        Flagged equipment can be checked out with a deposit above 0, and the
+        amount is stored on the rental.
+    """
+    equipment = create_flagged_equipment(client)
+    renter = create_renter(client)
+
+    response = client.post("/rentals", json={
+        "equipment_id": equipment["id"],
+        "renter_id": renter["id"],
+        "deposit_amount": 50.0,
+    })
+    assert response.status_code == 201
+    assert response.get_json()["deposit_amount"] == 50.0
+    reread = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert reread["available_units"] == equipment["available_units"] - 1
+
+
+def test_checkout_flagged_equipment_deposit_int_ok_bool_rejected(client):
+    """
+        bool is a subclass of int in Python, so True looks like a deposit of 1.
+        A real integer deposit is accepted; True is rejected.
+    """
+    equipment = create_flagged_equipment(client, total_units=2)
+    renter = create_renter(client)
+    payload = {"equipment_id": equipment["id"], "renter_id": renter["id"]}
+
+    rejected = client.post("/rentals", json={**payload, "deposit_amount": True})
+    assert rejected.status_code == 400
+
+    accepted = client.post("/rentals", json={**payload, "deposit_amount": 1})
+    assert accepted.status_code == 201
+    assert accepted.get_json()["deposit_amount"] == 1
+
+
+@pytest.mark.parametrize("zero_deposit", ["missing", 0, 0.0])
+def test_checkout_unflagged_equipment_accepts_no_deposit(client, zero_deposit):
+    """
+        Equipment without the flag is checked out with no deposit: a missing
+        amount or an explicit 0 is fine and is stored as 0.
+    """
+    equipment = create_equipment(client)
+    renter = create_renter(client)
+
+    payload = {"equipment_id": equipment["id"], "renter_id": renter["id"]}
+    if zero_deposit != "missing":
+        payload["deposit_amount"] = zero_deposit
+
+    response = client.post("/rentals", json=payload)
+    assert response.status_code == 201
+    assert response.get_json()["deposit_amount"] == 0
+
+
+@pytest.mark.parametrize("bad_deposit", [20, 0.01, -5, "abc", "0", None, True, False, INVALID_DICT_VALUE])
+def test_checkout_unflagged_equipment_rejects_any_deposit(client, bad_deposit):
+    """
+        Equipment without the flag takes no deposit. Any amount other than 0
+        (including negative, non-numeric and boolean values) is a 400 and
+        changes nothing.
+    """
+    equipment = create_equipment(client)
+    renter = create_renter(client)
+
+    response = client.post("/rentals", json={
+        "equipment_id": equipment["id"],
+        "renter_id": renter["id"],
+        "deposit_amount": bad_deposit,
+    })
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+    assert_no_rental_created(client, equipment)
+
+
+def test_flag_change_decides_whether_deposit_is_needed(client):
+    """
+        The same item takes no deposit while unflagged, needs one once it is
+        flagged, and goes back to taking none when unflagged again.
+    """
+    equipment = create_equipment(client, total_units=3)
+    renter = create_renter(client)
+    url = f"/equipment/{equipment['id']}/deposit"
+
+    def checkout(deposit):
+        return client.post("/rentals", json={
+            "equipment_id": equipment["id"], "renter_id": renter["id"], "deposit_amount": deposit,
+        }).status_code
+
+    def return_all():
+        for rental in client.get("/rentals").get_json():
+            if rental["return_date"] is None:
+                assert client.put(f"/rentals/{rental['id']}/return").status_code == 200
+
+    assert checkout(0) == 201 and checkout(25) == 400
+    return_all()
+
+    assert client.patch(url, json={"needs_deposit": True}).status_code == 200
+    assert checkout(0) == 400 and checkout(25) == 201
+    return_all()
+
+    assert client.patch(url, json={"needs_deposit": False}).status_code == 200
+    assert checkout(0) == 201 and checkout(25) == 400
+
+
+@pytest.mark.parametrize("bad_deposit", ["", "0", "-5", "abc"])
+def test_ui_checkout_flagged_equipment_rejects_bad_deposit(client, bad_deposit):
+    """
+        The HTML checkout form enforces the same rule as the API: a flagged
+        item with a missing, zero, negative or non-numeric deposit is rejected
+        with a 400, shows an error, and changes nothing.
+    """
+    equipment = create_flagged_equipment(client)
+    renter = create_renter(client)
+
+    response = client.post("/ui/rentals", data={
+        "equipment_id": equipment["id"],
+        "renter_id": renter["id"],
+        "deposit_amount": bad_deposit,
+    })
+    assert response.status_code == 400
+    assert b"requires a deposit" in response.data
+    assert_no_rental_created(client, equipment)
+
+
+def test_ui_checkout_stores_deposit(client):
+    """
+        The HTML checkout form accepts a valid deposit on flagged equipment and
+        stores it, and unflagged equipment needs no deposit.
+    """
+    flagged = create_flagged_equipment(client)
+    plain = create_equipment(client, name="Tent")
+    renter = create_renter(client)
+
+    ok = client.post("/ui/rentals", data={
+        "equipment_id": flagged["id"], "renter_id": renter["id"], "deposit_amount": "75.50",
+    })
+    assert ok.status_code == 302
+
+    no_deposit = client.post("/ui/rentals", data={
+        "equipment_id": plain["id"], "renter_id": renter["id"], "deposit_amount": "",
+    })
+    assert no_deposit.status_code == 302
+
+    amounts = {r["equipment_id"]: r["deposit_amount"] for r in client.get("/rentals").get_json()}
+    assert amounts == {flagged["id"]: 75.5, plain["id"]: 0.0}
+
+
+@pytest.mark.parametrize("bad_deposit", ["20", "0.01", "-5", "abc"])
+def test_ui_checkout_unflagged_equipment_rejects_deposit(client, bad_deposit):
+    """
+        The HTML checkout form also refuses a deposit on unflagged equipment
+        with a 400 and an error, and changes nothing.
+    """
+    equipment = create_equipment(client)
+    renter = create_renter(client)
+
+    response = client.post("/ui/rentals", data={
+        "equipment_id": equipment["id"],
+        "renter_id": renter["id"],
+        "deposit_amount": bad_deposit,
+    })
+    assert response.status_code == 400
+    assert b"doesn&#39;t take a deposit" in response.data
+    assert_no_rental_created(client, equipment)
+
+
+def rent_one_unit(client, equipment):
+    """Helper: check out one unit of the equipment through the API."""
+    renter = create_renter(client)
+    response = client.post("/rentals", json={
+        "equipment_id": equipment["id"],
+        "renter_id": renter["id"],
+        "deposit_amount": 10 if equipment["needs_deposit"] else 0,
+    })
+    assert response.status_code == 201
+
+
+def test_ui_toggle_deposit_flag(client):
+    """
+        The equipment page toggles the flag on and off, and the change is persisted.
+    """
+    item = create_equipment(client)
+    url = f"/ui/equipment/{item['id']}/deposit"
+
+    assert client.post(url, data={"needs_deposit": "true"}).status_code == 302
+    assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is True
+
+    assert client.post(url, data={"needs_deposit": "false"}).status_code == 302
+    assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is False
+
+
+def test_ui_toggle_deposit_flag_locked(client):
+    """
+        With a unit rented out the page refuses the change (409), shows why,
+        and leaves the flag as it was.
+    """
+    item = create_equipment(client, name="Canoe")
+    rent_one_unit(client, item)
+
+    response = client.post(f"/ui/equipment/{item['id']}/deposit", data={"needs_deposit": "true"})
+    assert response.status_code == 409
+    # Jinja escapes the apostrophe in "can't", so match the text after it
+    assert b"change while units are rented out" in response.data
+    assert b"Canoe" in response.data
+    assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is False
+
+
+def test_ui_toggle_deposit_flag_invalid(client):
+    """
+        A missing item redirects away without error; a bad value is a 400 and
+        changes nothing.
+    """
+    assert client.post("/ui/equipment/999/deposit", data={"needs_deposit": "true"}).status_code == 302
+
+    item = create_equipment(client)
+    for bad in [{}, {"needs_deposit": "yes"}, {"needs_deposit": ""}]:
+        response = client.post(f"/ui/equipment/{item['id']}/deposit", data=bad)
+        assert response.status_code == 400
+        assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is False
+
+
+def test_equipment_page_shows_deposit_state(client):
+    """
+        The page shows a checked box for flagged items, an unchecked box for
+        others, and a disabled box with a note for items that are rented out.
+    """
+    create_flagged_equipment(client, name="Flagged")
+    create_equipment(client, name="Plain")
+    rented = create_equipment(client, name="Rented")
+    rent_one_unit(client, rented)
+
+    html = client.get("/ui/equipment").get_data(as_text=True)
+    assert html.count("checked") == 1
+    assert html.count("disabled") == 1
+    assert "locked while rented out" in html
+
+
+def test_ui_bulk_deposit_flag_reports_skipped(client):
+    """
+        Bulk apply from the page updates unlocked items in the category and the
+        response page names what was skipped.
+    """
+    rented = create_equipment(client, name="Canoe", category="Hiking")
+    free = create_equipment(client, name="Boots", category="Hiking")
+    other = create_equipment(client, name="Tent", category="Camping")
+    rent_one_unit(client, rented)
+
+    response = client.post("/ui/equipment/deposit/bulk", data={"category": "Hiking", "needs_deposit": "true"})
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Updated 1 item(s) in Hiking." in html
+    assert "Skipped 1 because units are rented out: Canoe." in html
+    assert flags_by_id(client) == {rented["id"]: False, free["id"]: True, other["id"]: False}
+
+    # The message is not kept: a later visit doesn't show it
+    assert "Updated 1 item(s)" not in client.get("/ui/equipment").get_data(as_text=True)
+
+
+def test_ui_bulk_deposit_flag_unknown_category_and_bad_input(client):
+    """
+        A category with no items reports that; missing fields are a 400 and change nothing.
+    """
+    item = create_equipment(client, category="Hiking")
+
+    response = client.post("/ui/equipment/deposit/bulk", data={"category": "Boating", "needs_deposit": "true"})
+    assert response.status_code == 200
+    assert "No equipment found in category Boating" in response.get_data(as_text=True)
+
+    for bad in [{}, {"category": "Hiking"}, {"needs_deposit": "true"}, {"category": "Hiking", "needs_deposit": "yes"}]:
+        assert client.post("/ui/equipment/deposit/bulk", data=bad).status_code == 400
+    assert flags_by_id(client) == {item["id"]: False}
+
+
+# =========================== END OF DEPOSIT TESTS ===========================
+
+
+# ============================== RENTER TESTS ================================
+
+
 def create_renter(client, **overrides):
     """Helper: create a renter and return its JSON body."""
     payload = {"name": "Alice Smith", "email": "alice@example.com"}
@@ -414,6 +948,7 @@ def test_create_renter(client):
         A created renter is returned with its fields, gets a membership date of
         today, and is persisted (visible on GET and in the list).
     """
+    from datetime import datetime as date
     create_response = client.post("/renters", json={
         "name": "Alice Smith",
         "email": "alice@example.com"

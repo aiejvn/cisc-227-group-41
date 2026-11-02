@@ -31,6 +31,11 @@ def checkout_equipment():
     # still be checked out. The check below is intentionally absent:
     #   if not item.is_available:
     #       return jsonify({"error": "Equipment is out of service"}), 400
+    deposit_amount = data.get("deposit_amount", 0.0)
+    # Must run before available_units changes so a rejected checkout leaves no trace
+    problem = item.deposit_problem(deposit_amount)
+    if problem is not None:
+        return jsonify({"error": problem}), 400
     item.available_units -= 1
 
     rental_id = store.next_id("rental")
@@ -39,7 +44,7 @@ def checkout_equipment():
         equipment_id=data["equipment_id"],
         renter_id=data["renter_id"],
         due_date=Rental.default_due_date(),
-        deposit_amount=data.get("deposit_amount", 0.0),
+        deposit_amount=deposit_amount,
     )
     store.rentals[rental_id] = rental
     return jsonify(rental.to_dict()), 201
