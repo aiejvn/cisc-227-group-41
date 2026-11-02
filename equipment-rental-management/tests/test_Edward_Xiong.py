@@ -57,6 +57,7 @@ def test_update_renter(client):
     """ Updating a renter will change the name and email associated,
         the changes should persist with future renter retrievals.
     """
+    
     renter = create_renter(client)
     update_payload = {"name": "Alice Jones", "email": "alicejones@example.com"}
     
@@ -77,6 +78,7 @@ def test_update_renter_partial(client):
     """ A PUT containing only some fields to change and leaves
         the remaining renter information the same. 
     """
+    
     renter = create_renter(client)
     
     response = client.put(f"/renters{renter['id']}", json = {"name": "Alice Mace"})
@@ -105,6 +107,7 @@ def test_invalud_update_reneter(client, bad_update):
         The current update process doesn't validate renter values, so
         this test might expose an existing defect in the system.    
     """
+    
     renter = create_renter(client)
     
     response = client.put(f"/renters/{renter['id']}", json = bad_update)
