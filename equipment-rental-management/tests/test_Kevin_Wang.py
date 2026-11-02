@@ -4,8 +4,11 @@
     Tests that submit invalid input assert a 4xx status AND that no state changed.
 """
 import pytest
+from datetime import datetime as date
 
 INVALID_DICT_VALUE = {"example": "no input categories accept a dictionary. this should fail all of them"}
+
+REPEATS = 5  # how many times each action is repeated in the "repeat" tests
 
 
 def create_equipment(client, **overrides):
@@ -194,7 +197,9 @@ def test_invalid_read_equipment(client):
 
     # Non-integer ids never match the <int:> route, so they 404 in routing
     for query in ["/equipment/Null", "/equipment/-1", "/equipment/Blabla"]:
-        assert client.get(query).status_code == 404
+        response = client.get(query)
+        assert response.status_code == 404
+        assert "error" in response.get_json()
 
 
 @pytest.mark.parametrize("bad_update", [
@@ -279,6 +284,117 @@ def test_update_available_units_over_total(client):
     reread = client.get(f"/equipment/{data['id']}").get_json()
     assert reread["available_units"] <= reread["total_units"]
 
+
+def test_repeat_add_equipment(client):
+    """
+        Adding the identical equipment repeatedly is allowed: each request
+        creates a separate record with its own id.
+    """
+    created = [create_equipment(client) for _ in range(REPEATS)]
+
+    ids = [item["id"] for item in created]
+    assert len(set(ids)) == REPEATS
+
+    listed = client.get("/equipment").get_json()
+    assert len(listed) == REPEATS
+    for item in created:
+        assert client.get(f"/equipment/{item['id']}").get_json() == item
+
+
+def test_repeat_get_equipment(client):
+    """
+        Reading the same item repeatedly returns the same body every time and
+        never changes the stored data.
+    """
+    data = create_equipment(client)
+    create_equipment(client, name="Tent")
+
+    for _ in range(REPEATS):
+        response = client.get(f"/equipment/{data['id']}")
+        assert response.status_code == 200
+        assert response.get_json() == data
+
+    assert len(client.get("/equipment").get_json()) == 2
+
+
+def test_repeat_list_equipment(client):
+    """
+        Listing repeatedly returns identical results and never changes the data.
+    """
+    create_equipment(client, name="Canoe")
+    create_equipment(client, name="Tent", category="Camping")
+
+    first_listing = client.get("/equipment").get_json()
+    assert len(first_listing) == 2
+    for _ in range(REPEATS):
+        assert client.get("/equipment").get_json() == first_listing
+
+
+def test_repeat_update_equipment_same_payload(client):
+    """
+        Applying the same update repeatedly gives the same result each time
+        and never changes the id.
+    """
+    data = create_equipment(client)
+    payload = {"name": "Kayak", "category": "Rafting", "total_units": 10}
+
+    for _ in range(REPEATS):
+        response = client.put(f"/equipment/{data['id']}", json=payload)
+        assert response.status_code == 200
+
+        reread = client.get(f"/equipment/{data['id']}").get_json()
+        assert reread["id"] == data["id"]
+        for json_key in payload:
+            assert reread[json_key] == payload[json_key]
+
+    assert len(client.get("/equipment").get_json()) == 1
+
+
+def test_repeat_update_equipment_different_payloads(client):
+    """
+        Repeated updates with different values each overwrite the previous one
+        (the last update wins) and leave other items untouched.
+    """
+    data = create_equipment(client)
+    other = create_equipment(client, name="Tent")
+
+    for i in range(REPEATS):
+        new_name = f"Canoe v{i}"
+        assert client.put(f"/equipment/{data['id']}", json={"name": new_name}).status_code == 200
+        assert client.get(f"/equipment/{data['id']}").get_json()["name"] == new_name
+
+    assert client.get(f"/equipment/{other['id']}").get_json() == other
+
+
+def test_repeat_delete_equipment(client):
+    """
+        Only the first delete of an item succeeds; every repeat is a 404 and
+        leaves the other items untouched.
+    """
+    data = create_equipment(client)
+    other = create_equipment(client, name="Tent")
+
+    assert client.delete(f"/equipment/{data['id']}").status_code == 204
+    for _ in range(REPEATS - 1):
+        assert client.delete(f"/equipment/{data['id']}").status_code == 404
+
+    assert [e["id"] for e in client.get("/equipment").get_json()] == [other["id"]]
+
+
+def test_repeat_add_remove_equipment_cycle(client):
+    """
+        Repeatedly adding and removing equipment never reuses an id and leaves
+        the list empty at the end.
+    """
+    seen_ids = []
+    for _ in range(REPEATS):
+        data = create_equipment(client)
+        assert data["id"] not in seen_ids
+        seen_ids.append(data["id"])
+        assert client.delete(f"/equipment/{data['id']}").status_code == 204
+
+    assert seen_ids == sorted(seen_ids)
+    assert client.get("/equipment").get_json() == []
 
 
 # =========================== END OF EQUIPMENT TESTS ===========================
@@ -405,3 +521,46 @@ def test_invalid_delete_renter(client):
     # Non-integer ids never match the <int:> route, so they 404 in routing
     for query in ["/renters/Null", "/renters/-1", "/renters/Blabla"]:
         assert client.delete(query).status_code == 404
+
+
+def test_repeat_add_renter(client):
+    """
+        Adding the identical renter repeatedly is allowed: each request creates
+        a separate renter with its own id and today's membership date.
+    """
+    created = [create_renter(client) for _ in range(REPEATS)]
+
+    assert len({renter["id"] for renter in created}) == REPEATS
+    assert all(renter["membership_date"] == date.today().isoformat() for renter in created)
+    assert len(client.get("/renters").get_json()) == REPEATS
+
+
+def test_repeat_delete_renter(client):
+    """
+        Only the first delete of a renter succeeds; every repeat is a 404 and
+        leaves the other renters untouched.
+    """
+    renter = create_renter(client)
+    other = create_renter(client, name="Bob", email="bob@example.com")
+
+    assert client.delete(f"/renters/{renter['id']}").status_code == 204
+    for _ in range(REPEATS - 1):
+        assert client.delete(f"/renters/{renter['id']}").status_code == 404
+
+    assert [r["id"] for r in client.get("/renters").get_json()] == [other["id"]]
+
+
+def test_repeat_add_remove_renter_cycle(client):
+    """
+        Repeatedly adding and removing renters never reuses an id and leaves
+        the list empty at the end.
+    """
+    seen_ids = []
+    for _ in range(REPEATS):
+        renter = create_renter(client)
+        assert renter["id"] not in seen_ids
+        seen_ids.append(renter["id"])
+        assert client.delete(f"/renters/{renter['id']}").status_code == 204
+
+    assert seen_ids == sorted(seen_ids)
+    assert client.get("/renters").get_json() == []
