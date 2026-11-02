@@ -17,6 +17,13 @@ class Equipment:
         """
         return self.available_units != self.total_units
 
+    def set_deposit_flag(self, value):
+        """Set needs_deposit unless it is locked. Returns True if applied, False if locked."""
+        if self.deposit_flag_locked():
+            return False
+        self.needs_deposit = value
+        return True
+
     def deposit_problem(self, amount):
         """
             Return an error message if a checkout with this deposit amount must be

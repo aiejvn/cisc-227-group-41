@@ -401,6 +401,109 @@ def test_toggle_deposit_flag_locked_while_rented(client, start_flagged):
     assert unlocked.get_json()["needs_deposit"] is (not start_flagged)
 
 
+def flags_by_id(client):
+    """Helper: map every equipment id to its needs_deposit flag."""
+    return {e["id"]: e["needs_deposit"] for e in client.get("/equipment").get_json()}
+
+
+def test_bulk_deposit_flag_applies_to_category(client):
+    """
+        Bulk apply flags every item whose category matches exactly, leaves other
+        categories alone, and can be undone.
+    """
+    canoe = create_equipment(client, name="Canoe", category="Hiking")
+    boots = create_equipment(client, name="Boots", category="Hiking")
+    tent = create_equipment(client, name="Tent", category="Camping")
+
+    response = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [canoe["id"], boots["id"]], "skipped": []}
+    assert flags_by_id(client) == {canoe["id"]: True, boots["id"]: True, tent["id"]: False}
+
+    off = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": False})
+    assert off.status_code == 200
+    assert flags_by_id(client) == {canoe["id"]: False, boots["id"]: False, tent["id"]: False}
+
+
+@pytest.mark.parametrize("typed_category", ["hiking", "HIKING", " Hiking", "Hiking "])
+def test_bulk_deposit_flag_category_match_is_exact(client, typed_category):
+    """
+        Category matching is exact: different case or surrounding spaces is a
+        different category, so nothing is changed.
+    """
+    item = create_equipment(client, category="Hiking")
+    response = client.post("/equipment/deposit/bulk", json={"category": typed_category, "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [], "skipped": []}
+    assert flags_by_id(client) == {item["id"]: False}
+
+
+def test_bulk_deposit_flag_skips_locked_items(client):
+    """
+        An item with a unit rented out is skipped and reported; the rest of the
+        category is still updated.
+    """
+    rented = create_equipment(client, name="Canoe", category="Hiking")
+    free = create_equipment(client, name="Boots", category="Hiking")
+    renter = create_renter(client)
+    assert client.post("/rentals", json={
+        "equipment_id": rented["id"], "renter_id": renter["id"],
+    }).status_code == 201
+
+    response = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [free["id"]], "skipped": [rented["id"]]}
+    assert flags_by_id(client) == {rented["id"]: False, free["id"]: True}
+
+
+def test_bulk_deposit_flag_skips_locked_item_already_at_target(client):
+    """
+        The lock has no exception: a locked item is skipped even if it already
+        has the requested value.
+    """
+    item = create_flagged_equipment(client)
+    renter = create_renter(client)
+    assert client.post("/rentals", json={
+        "equipment_id": item["id"], "renter_id": renter["id"], "deposit_amount": 10,
+    }).status_code == 201
+
+    response = client.post("/equipment/deposit/bulk", json={"category": "Hiking", "needs_deposit": True})
+    assert response.get_json() == {"updated": [], "skipped": [item["id"]]}
+
+
+def test_bulk_deposit_flag_no_matching_category(client):
+    """
+        A category with no items is a valid request with an empty result.
+    """
+    create_equipment(client, category="Hiking")
+    response = client.post("/equipment/deposit/bulk", json={"category": "Boating", "needs_deposit": True})
+    assert response.status_code == 200
+    assert response.get_json() == {"updated": [], "skipped": []}
+
+
+@pytest.mark.parametrize("bad_payload", [
+    {},
+    {"needs_deposit": True},                                  # missing category
+    {"category": "Hiking"},                                   # missing needs_deposit
+    {"category": "", "needs_deposit": True},
+    {"category": "   ", "needs_deposit": True},
+    {"category": None, "needs_deposit": True},
+    {"category": 5, "needs_deposit": True},
+    {"category": INVALID_DICT_VALUE, "needs_deposit": True},
+    {"category": "Hiking", "needs_deposit": "yes"},
+    {"category": "Hiking", "needs_deposit": 1},
+    {"category": "Hiking", "needs_deposit": None},
+])
+def test_bulk_deposit_flag_invalid_input(client, bad_payload):
+    """
+        Bad input is a 400 and no item is changed.
+    """
+    create_equipment(client, category="Hiking")
+    response = client.post("/equipment/deposit/bulk", json=bad_payload)
+    assert response.status_code == 400
+    assert set(flags_by_id(client).values()) == {False}
+
+
 def assert_no_rental_created(client, equipment):
     """Helper: a rejected checkout must leave units and rentals untouched."""
     assert client.get("/rentals").get_json() == []
