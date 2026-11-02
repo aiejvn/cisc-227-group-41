@@ -170,7 +170,7 @@ def test_get_one_renter(client):
     assert data["email"] == "alice@example.com"
     assert data["membership_date"] == date.today().isoformat()
 
-def test_get_noexistant_renter(client):
+def test_get_nonexistent_renter(client):
     """ Retrieving a renter ID that doesn't exist will return a
         404 with an error message.
     """
