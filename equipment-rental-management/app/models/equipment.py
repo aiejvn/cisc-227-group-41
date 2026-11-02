@@ -17,6 +17,18 @@ class Equipment:
         """
         return self.available_units != self.total_units
 
+    def deposit_problem(self, amount):
+        """
+            Return an error message if a checkout with this deposit amount must be
+            rejected, or None if it may proceed. Unflagged equipment never has a problem.
+        """
+        if not self.needs_deposit:
+            return None
+        # bool is a subclass of int, so True would otherwise pass as a deposit of 1
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not amount > 0:
+            return "This equipment requires a deposit greater than 0"
+        return None
+
     def to_dict(self):
         return {
             "id": self.id,

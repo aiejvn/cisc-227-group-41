@@ -61,6 +61,13 @@ def rentals_page():
         renter_id = int(request.form["renter_id"])
         item = store.equipment.get(equipment_id)
         if item is not None:
+            try:
+                deposit_amount = float(request.form.get("deposit_amount") or 0.0)
+            except ValueError:
+                deposit_amount = None  # not a number; flagged items will reject it
+            problem = item.deposit_problem(deposit_amount)
+            if problem is not None:
+                return render_template("rentals.html", rentals=store.rentals.values(), error=problem), 400
             item.available_units -= 1
             rental_id = store.next_id("rental")
             rental = Rental(
@@ -68,6 +75,7 @@ def rentals_page():
                 equipment_id=equipment_id,
                 renter_id=renter_id,
                 due_date=Rental.default_due_date(),
+                deposit_amount=deposit_amount if deposit_amount is not None else 0.0,
             )
             store.rentals[rental_id] = rental
         return redirect(url_for("views.rentals_page"))
