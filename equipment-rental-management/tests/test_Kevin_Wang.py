@@ -284,6 +284,45 @@ def test_update_available_units_over_total(client):
 # =========================== END OF EQUIPMENT TESTS ===========================
 
 
+# ============================== DEPOSIT TESTS ================================
+
+
+def test_needs_deposit_defaults_to_false(client):
+    """
+        New equipment doesn't need a deposit, and the flag is visible on both
+        the create response and a follow-up GET.
+    """
+    data = create_equipment(client)
+    assert data["needs_deposit"] is False
+    assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is False
+
+
+def test_deposit_flag_lock_follows_rented_units():
+    """
+        The flag is locked exactly when some units are rented out, i.e. when
+        available_units differs from total_units.
+    """
+    from app.models.equipment import Equipment
+
+    item = Equipment(id=1, name="Canoe", category="Hiking", total_units=3, available_units=3)
+    assert item.deposit_flag_locked() is False
+
+    item.available_units = 2  # one unit rented
+    assert item.deposit_flag_locked() is True
+
+    item.available_units = 0  # all units rented
+    assert item.deposit_flag_locked() is True
+
+    item.available_units = 3  # everything returned
+    assert item.deposit_flag_locked() is False
+
+
+# =========================== END OF DEPOSIT TESTS ===========================
+
+
+# ============================== RENTER TESTS ================================
+
+
 def create_renter(client, **overrides):
     """Helper: create a renter and return its JSON body."""
     payload = {"name": "Alice Smith", "email": "alice@example.com"}
