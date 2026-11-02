@@ -87,7 +87,7 @@ def test_update_renter_partial(client):
     {"name": 123},
     {"name": INVALID_DICT_VALUE},
 ])
-def test_invalud_update_reneter(client, bad_update):
+def test_invalid_update_renter(client, bad_update):
     """ An invalid update should return a 4xx response and leave the
         original renter information unchanged.
         
