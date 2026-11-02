@@ -4,6 +4,7 @@
     Tests that submit invalid input assert a 4xx status AND that no state changed.
 """
 import pytest
+from datetime import datetime as date
 
 INVALID_DICT_VALUE = {"example": "no input categories accept a dictionary. this should fail all of them"}
 
