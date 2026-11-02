@@ -55,7 +55,7 @@ def test_update_renter(client):
     
     reread = client.get(f"renters/{renter['id']}")
     assert reread.status_code == 200
-    assert reread.get_jason() == updated
+    assert reread.get_json() == updated
     
     assert updated["id"] == renter["id"]
     assert updated["membership_date"] == renter["membership_date"]
@@ -141,7 +141,7 @@ def test_list_renters_reflects_updates(client):
     
     renter = create_renter(client)
     
-    response = client.put(f"/renters/{renter["id"]}", json = {"name": "Alice Updated"})
+    response = client.put(f"/renters/{renter['id']}", json = {"name": "Alice Updated"})
     assert response.status_code == 200
     
     listed = client.get("/renters").get_json()
