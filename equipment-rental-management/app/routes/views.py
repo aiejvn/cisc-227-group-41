@@ -1,6 +1,6 @@
 from datetime import date
 
-from flask import Blueprint, redirect, render_template, request, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from app import store
 from app.models.equipment import Equipment
@@ -29,7 +29,57 @@ def equipment_page():
         )
         store.equipment[equipment_id] = item
         return redirect(url_for("views.equipment_page"))
-    return render_template("equipment.html", equipment=store.equipment.values())
+    return render_equipment_page()
+
+
+def render_equipment_page(error=None, status=200):
+    categories = sorted({item.category for item in store.equipment.values()})
+    return render_template(
+        "equipment.html", equipment=store.equipment.values(), categories=categories, error=error
+    ), status
+
+
+@views_bp.route("/ui/equipment/<int:equipment_id>/deposit", methods=["POST"])
+def set_deposit_flag_page(equipment_id):
+    item = store.equipment.get(equipment_id)
+    if item is None:
+        return redirect(url_for("views.equipment_page"))
+    needs_deposit = request.form.get("needs_deposit")
+    if needs_deposit not in ("true", "false"):
+        return render_equipment_page(error="Choose whether a deposit is required", status=400)
+    if not item.set_deposit_flag(needs_deposit == "true"):
+        return render_equipment_page(
+            error=f"The deposit requirement for {item.name} can't change while units are rented out",
+            status=409,
+        )
+    return redirect(url_for("views.equipment_page"))
+
+
+@views_bp.route("/ui/equipment/deposit/bulk", methods=["POST"])
+def bulk_set_deposit_flag_page():
+    category = request.form.get("category", "")
+    needs_deposit = request.form.get("needs_deposit")
+    if not category.strip() or needs_deposit not in ("true", "false"):
+        return render_equipment_page(error="Choose a category and whether a deposit is required", status=400)
+
+    updated, skipped = [], []
+    for item in store.equipment.values():
+        if item.category != category:
+            continue
+        if item.set_deposit_flag(needs_deposit == "true"):
+            updated.append(item)
+        else:
+            skipped.append(item)
+
+    if not updated and not skipped:
+        flash(f"No equipment found in category {category}")
+    else:
+        message = f"Updated {len(updated)} item(s) in {category}."
+        if skipped:
+            names = ", ".join(item.name for item in skipped)
+            message += f" Skipped {len(skipped)} because units are rented out: {names}."
+        flash(message)
+    return redirect(url_for("views.equipment_page"))
 
 
 @views_bp.route("/ui/equipment/<int:equipment_id>/delete", methods=["POST"])

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Equipment</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
 <table>
   <tr>
-    <th>ID</th><th>Name</th><th>Category</th><th>Total</th><th>Available</th><th></th>
+    <th>ID</th><th>Name</th><th>Category</th><th>Total</th><th>Available</th><th>Needs deposit</th><th></th>
   </tr>
   {% for item in equipment %}
   <tr>
@@ -13,6 +14,20 @@
     <td>{{ item.total_units }}</td>
     <td>{{ item.available_units }}</td>
     <td>
+      <form class="deposit-form" method="post" action="{{ url_for('views.set_deposit_flag_page', equipment_id=item.id) }}">
+        <input type="hidden" name="needs_deposit" value="{{ 'false' if item.needs_deposit else 'true' }}">
+        <input type="checkbox" aria-label="Needs deposit for {{ item.name }}"
+               {% if item.needs_deposit %}checked{% endif %}
+               {% if item.deposit_flag_locked() %}disabled{% endif %}
+               onchange="this.form.submit()">
+        {% if item.deposit_flag_locked() %}
+        <span class="locked-note">locked while rented out</span>
+        {% else %}
+        <noscript><button type="submit">Save</button></noscript>
+        {% endif %}
+      </form>
+    </td>
+    <td>
       <form class="delete-form" method="post" action="{{ url_for('views.delete_equipment_page', equipment_id=item.id) }}">
         <button type="submit">Delete</button>
       </form>
@@ -20,6 +35,26 @@
   </tr>
   {% endfor %}
 </table>
+
+<h2>Set Deposit for a Category</h2>
+{% if categories %}
+<form method="post" action="{{ url_for('views.bulk_set_deposit_flag_page') }}">
+  <label>Category
+    <select name="category" required>
+      {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Deposit
+    <select name="needs_deposit">
+      <option value="true">Required</option>
+      <option value="false">Not required</option>
+    </select>
+  </label>
+  <button type="submit">Apply to category</button>
+</form>
+{% else %}
+<p>Add equipment to set deposits by category.</p>
+{% endif %}
 
 <h2>Add Equipment</h2>
 <form method="post" action="{{ url_for('views.equipment_page') }}">

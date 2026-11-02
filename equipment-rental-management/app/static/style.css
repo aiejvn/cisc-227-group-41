@@ -112,3 +112,31 @@ button:hover {
 ul {
   line-height: 1.8;
 }
+
+.notice, .error {
+  padding: 0.6rem 0.9rem;
+  border-radius: 4px;
+}
+
+.notice {
+  background: #e8f1fb;
+  color: #1c3d6e;
+}
+
+.error {
+  background: #fbeaea;
+  color: #8c2c22;
+}
+
+.deposit-form {
+  margin: 0;
+}
+
+.deposit-form input[type="checkbox"] {
+  margin: 0;
+}
+
+.locked-note {
+  color: #666;
+  font-size: 0.85rem;
+}

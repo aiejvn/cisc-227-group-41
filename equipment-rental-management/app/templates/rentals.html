@@ -29,7 +29,7 @@
 <form method="post" action="{{ url_for('views.rentals_page') }}">
   <label>Equipment ID <input type="number" name="equipment_id" required></label>
   <label>Renter ID <input type="number" name="renter_id" required></label>
-  <label>Deposit <input type="number" name="deposit_amount" min="0" step="0.01"></label>
+  <label>Deposit (if needed) <input type="number" name="deposit_amount" min="0" step="0.01"></label>
   <button type="submit">Check Out</button>
 </form>
 {% endblock %}

@@ -639,6 +639,111 @@ def test_ui_checkout_stores_deposit(client):
     assert amounts == {flagged["id"]: 75.5, plain["id"]: 0.0}
 
 
+def rent_one_unit(client, equipment):
+    """Helper: check out one unit of the equipment through the API."""
+    renter = create_renter(client)
+    response = client.post("/rentals", json={
+        "equipment_id": equipment["id"], "renter_id": renter["id"], "deposit_amount": 10,
+    })
+    assert response.status_code == 201
+
+
+def test_ui_toggle_deposit_flag(client):
+    """
+        The equipment page toggles the flag on and off, and the change is persisted.
+    """
+    item = create_equipment(client)
+    url = f"/ui/equipment/{item['id']}/deposit"
+
+    assert client.post(url, data={"needs_deposit": "true"}).status_code == 302
+    assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is True
+
+    assert client.post(url, data={"needs_deposit": "false"}).status_code == 302
+    assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is False
+
+
+def test_ui_toggle_deposit_flag_locked(client):
+    """
+        With a unit rented out the page refuses the change (409), shows why,
+        and leaves the flag as it was.
+    """
+    item = create_equipment(client, name="Canoe")
+    rent_one_unit(client, item)
+
+    response = client.post(f"/ui/equipment/{item['id']}/deposit", data={"needs_deposit": "true"})
+    assert response.status_code == 409
+    # Jinja escapes the apostrophe in "can't", so match the text after it
+    assert b"change while units are rented out" in response.data
+    assert b"Canoe" in response.data
+    assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is False
+
+
+def test_ui_toggle_deposit_flag_invalid(client):
+    """
+        A missing item redirects away without error; a bad value is a 400 and
+        changes nothing.
+    """
+    assert client.post("/ui/equipment/999/deposit", data={"needs_deposit": "true"}).status_code == 302
+
+    item = create_equipment(client)
+    for bad in [{}, {"needs_deposit": "yes"}, {"needs_deposit": ""}]:
+        response = client.post(f"/ui/equipment/{item['id']}/deposit", data=bad)
+        assert response.status_code == 400
+        assert client.get(f"/equipment/{item['id']}").get_json()["needs_deposit"] is False
+
+
+def test_equipment_page_shows_deposit_state(client):
+    """
+        The page shows a checked box for flagged items, an unchecked box for
+        others, and a disabled box with a note for items that are rented out.
+    """
+    create_flagged_equipment(client, name="Flagged")
+    create_equipment(client, name="Plain")
+    rented = create_equipment(client, name="Rented")
+    rent_one_unit(client, rented)
+
+    html = client.get("/ui/equipment").get_data(as_text=True)
+    assert html.count("checked") == 1
+    assert html.count("disabled") == 1
+    assert "locked while rented out" in html
+
+
+def test_ui_bulk_deposit_flag_reports_skipped(client):
+    """
+        Bulk apply from the page updates unlocked items in the category and the
+        follow-up page names what was skipped.
+    """
+    rented = create_equipment(client, name="Canoe", category="Hiking")
+    free = create_equipment(client, name="Boots", category="Hiking")
+    other = create_equipment(client, name="Tent", category="Camping")
+    rent_one_unit(client, rented)
+
+    response = client.post("/ui/equipment/deposit/bulk", data={"category": "Hiking", "needs_deposit": "true"})
+    assert response.status_code == 302
+    assert flags_by_id(client) == {rented["id"]: False, free["id"]: True, other["id"]: False}
+
+    html = client.get("/ui/equipment").get_data(as_text=True)
+    assert "Updated 1 item(s) in Hiking." in html
+    assert "Skipped 1 because units are rented out: Canoe." in html
+
+    # The message is shown once, not on every later visit
+    assert "Updated 1 item(s)" not in client.get("/ui/equipment").get_data(as_text=True)
+
+
+def test_ui_bulk_deposit_flag_unknown_category_and_bad_input(client):
+    """
+        A category with no items reports that; missing fields are a 400 and change nothing.
+    """
+    item = create_equipment(client, category="Hiking")
+
+    client.post("/ui/equipment/deposit/bulk", data={"category": "Boating", "needs_deposit": "true"})
+    assert "No equipment found in category Boating" in client.get("/ui/equipment").get_data(as_text=True)
+
+    for bad in [{}, {"category": "Hiking"}, {"needs_deposit": "true"}, {"category": "Hiking", "needs_deposit": "yes"}]:
+        assert client.post("/ui/equipment/deposit/bulk", data=bad).status_code == 400
+    assert flags_by_id(client) == {item["id"]: False}
+
+
 # =========================== END OF DEPOSIT TESTS ===========================
 
 
