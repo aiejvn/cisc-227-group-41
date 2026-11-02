@@ -1,12 +1,8 @@
-import os
-
 from flask import Flask
 
 
 def create_app():
     app = Flask(__name__)
-    # Needed for flash messages. The fallback is for local development only.
-    app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
 
     from app.routes.equipment import equipment_bp
     from app.routes.renters import renters_bp

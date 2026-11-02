@@ -27,13 +27,16 @@ class Equipment:
     def deposit_problem(self, amount):
         """
             Return an error message if a checkout with this deposit amount must be
-            rejected, or None if it may proceed. Unflagged equipment never has a problem.
+            rejected, or None if it may proceed. Flagged equipment needs a deposit
+            greater than 0; unflagged equipment takes no deposit (exactly 0).
         """
-        if not self.needs_deposit:
-            return None
         # bool is a subclass of int, so True would otherwise pass as a deposit of 1
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not amount > 0:
-            return "This equipment requires a deposit greater than 0"
+        valid_number = isinstance(amount, (int, float)) and not isinstance(amount, bool)
+        if self.needs_deposit:
+            if not valid_number or not amount > 0:
+                return "This equipment requires a deposit greater than 0"
+        elif not valid_number or amount != 0:
+            return "This equipment doesn't take a deposit"
         return None
 
     def to_dict(self):

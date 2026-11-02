@@ -1,6 +1,6 @@
 from datetime import date
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, redirect, render_template, request, url_for
 
 from app import store
 from app.models.equipment import Equipment
@@ -32,10 +32,14 @@ def equipment_page():
     return render_equipment_page()
 
 
-def render_equipment_page(error=None, status=200):
+def render_equipment_page(error=None, notice=None, status=200):
     categories = sorted({item.category for item in store.equipment.values()})
     return render_template(
-        "equipment.html", equipment=store.equipment.values(), categories=categories, error=error
+        "equipment.html",
+        equipment=store.equipment.values(),
+        categories=categories,
+        error=error,
+        notice=notice,
     ), status
 
 
@@ -72,14 +76,13 @@ def bulk_set_deposit_flag_page():
             skipped.append(item)
 
     if not updated and not skipped:
-        flash(f"No equipment found in category {category}")
+        notice = f"No equipment found in category {category}"
     else:
-        message = f"Updated {len(updated)} item(s) in {category}."
+        notice = f"Updated {len(updated)} item(s) in {category}."
         if skipped:
             names = ", ".join(item.name for item in skipped)
-            message += f" Skipped {len(skipped)} because units are rented out: {names}."
-        flash(message)
-    return redirect(url_for("views.equipment_page"))
+            notice += f" Skipped {len(skipped)} because units are rented out: {names}."
+    return render_equipment_page(notice=notice)
 
 
 @views_bp.route("/ui/equipment/<int:equipment_id>/delete", methods=["POST"])

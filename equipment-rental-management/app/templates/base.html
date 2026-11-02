@@ -13,9 +13,6 @@
     <a href="{{ url_for('views.rentals_page') }}">Rentals</a>
   </nav>
   <main>
-    {% for message in get_flashed_messages() %}
-    <p class="notice">{{ message }}</p>
-    {% endfor %}
     {% block content %}{% endblock %}
   </main>
 </body>
