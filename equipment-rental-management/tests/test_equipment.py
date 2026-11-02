@@ -2,8 +2,6 @@
     Test equipment features.
 
     Tests that submit invalid input assert a 4xx status AND that no state changed.
-    The app does no input validation today, so several of these are expected to
-    fail; each docstring states the requirement being checked.
 """
 import pytest
 
