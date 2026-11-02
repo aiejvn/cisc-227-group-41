@@ -1,21 +1,8 @@
-# ============================================================
-# EXAMPLE TESTS — READ THESE, THEN WRITE YOUR OWN
-# ============================================================
-# These two tests are provided as scaffolding to show you:
-#   1. How to use the `client` fixture from conftest.py
-#   2. Two common patterns: empty-list check and create-then-verify
-#
-# DO NOT count these toward your required test functions.
-# Write your own tests in a separate file, e.g. tests/test_<yourname>.py
-# ============================================================
-
 """
-Testing renter features, rental features will come later
+Testing assigned renter and rental features.
 
 Some tests are intended to expose defects in the current implementation.
 """
-
-
 
 import pytest
 from datetime import date, timedelta
@@ -196,3 +183,279 @@ def test_get_noexistant_renter(client):
     
     for query in ["/renters/Null", "/renters/Null"]:
         assert client.get(query).status_code == 404
+
+
+
+# ====================== Feature 4: Adding a rental ======================
+def test_add_rental(client):
+    """
+        Checking out equipment creates a rental with the expected renter,
+        equipment, due date, and deposit information.
+    """
+    
+    equipment = create_equipment(client)
+    renter = create_renter(client)
+
+    rental = create_rental(
+        client,
+        equipment_id=equipment["id"],
+        renter_id=renter["id"],
+        deposit_amount=40.0
+    )
+
+    assert rental["equipment_id"] == equipment["id"]
+    assert rental["renter_id"] == renter["id"]
+    assert rental["deposit_amount"] == 40.0
+    assert rental["return_date"] is None
+    assert rental["rental_date"] == date.today().isoformat()
+    assert rental["due_date"] == (date.today() + timedelta(days=7)).isoformat()
+
+    # The rental persists and is visible through the list endpoint
+    listed = client.get("/rentals").get_json()
+    assert rental in listed
+
+
+def test_add_rental_decreases_available_units(client):
+    """ Checking out one unit decreases available_units by one without
+        changing total_units.
+    """
+    
+    equipment = create_equipment(client, total_units=3)
+    renter = create_renter(client)
+
+    create_rental(client, equipment_id = equipment["id"], renter_id = renter["id"])
+
+    reread = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert reread["total_units"] == 3
+    assert reread["available_units"] == 2
+
+
+def test_add_rental_nonexistent_equipment(client):
+    """ Checking out nonexistent equipment will return a 404 and creates
+        no rental.
+    """
+    renter = create_renter(client)
+
+    response = client.post("/rentals", json = {"equipment_id": 9999, "renter_id": renter["id"]})
+    assert response.status_code == 404
+    assert "error" in response.get_json()
+    assert client.get("/rentals").get_json() == []
+
+
+def test_add_rental_nonexistent_renter(client):
+    """ Checking out equipment for a renter that does not exist will be
+        rejected without creating a rental or changing equipment availability.
+
+        The current checkout process does not verify that a renter_id exists, 
+        so this test should expose an existing defect in the system.
+    """
+    
+    equipment = create_equipment(client)
+
+    before = client.get(f"/equipment/{equipment['id']}").get_json()
+    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": 9999})
+    assert 400 <= response.status_code < 500
+    assert client.get("/rentals").get_json() == []
+
+    after = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert after == before
+
+
+def test_add_rental_when_no_units_are_available(client):
+    """ Equipment with no available units should not be checked out again.
+        Also, a rejected checkout must not make available_units negative.
+
+        The current checkout process does not check available_units, 
+        so this test is should expose an existing defect in the system.
+    """
+    equipment = create_equipment(client, total_units=1)
+    renter = create_renter(client)
+
+    create_rental(client, equipment_id = equipment["id"], renter_id = renter["id"])
+
+    equipment_before = client.get(f"/equipment/{equipment['id']}").get_json()
+    rentals_before = client.get("/rentals").get_json()
+    assert equipment_before["available_units"] == 0
+
+    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"]})
+    assert 400 <= response.status_code < 500
+
+    # Neither the rental list nor the equipment record should change
+    assert client.get("/rentals").get_json() == rentals_before
+
+    equipment_after = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert equipment_after == equipment_before
+
+
+  
+# ====================== Feature 5: Returning rented equipment ======================
+def test_return_rented_equipment(client):
+    """ Returning a rental will record today's date and restores one unit
+        to the equipment's available-unit count.
+    """
+    
+    equipment = create_equipment(client, total_units=3)
+    renter = create_renter(client)
+
+    rental = create_rental(client, equipment_id = equipment["id"], renter_id=renter["id"])
+
+    before_return = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert before_return["available_units"] == 2
+
+    response = client.put(f"/rentals/{rental['id']}/return")
+    assert response.status_code == 200
+
+    returned = response.get_json()
+    assert returned["id"] == rental["id"]
+    assert returned["return_date"] == date.today().isoformat()
+
+    # The return date shall retain
+    listed = client.get("/rentals").get_json()
+    persisted = next(r for r in listed if r["id"] == rental["id"])
+    assert persisted["return_date"] == date.today().isoformat()
+
+    # Restore one unit of equipment
+    after_return = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert after_return["available_units"] == 3
+    assert after_return["total_units"] == 3
+
+
+def test_return_rented_equipment_twice(client):
+    """ Returning the same rental twice will get rejected and should not 
+        increase available_units twice.
+    """
+    
+    equipment = create_equipment(client, total_units=2)
+    renter = create_renter(client)
+
+    rental = create_rental(client, equipment_id = equipment["id"], renter_id = renter["id"])
+
+    first_return = client.put(f"/rentals/{rental['id']}/return")
+    assert first_return.status_code == 200
+
+    after_first_return = client.get(f"/equipment/{equipment['id']}").get_json()
+    second_return = client.put(f"/rentals/{rental['id']}/return")
+    assert second_return.status_code == 400
+
+    after_second_return = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert after_second_return == after_first_return
+    assert after_second_return["available_units"] == 2
+
+
+def test_return_nonexistent_rental(client):
+    """ Returning a rental that doesn't exist returns a 404 and does not
+        change an equipment's availability.
+    """
+    
+    equipment = create_equipment(client)
+
+    before = client.get(f"/equipment/{equipment['id']}").get_json()
+
+    response = client.put("/rentals/999/return")
+    assert response.status_code == 404
+    assert "error" in response.get_json()
+
+    after = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert after == before
+
+
+
+# ====================== Feature 6: List all rentals ======================
+def test_list_rentals(client):
+    """ The list of rentals starts empty and returns all rentals after 
+        checkout.
+    """
+    
+    assert client.get("/rentals").get_json() == []
+    equipment = create_equipment(client)
+    
+    first_renter = create_renter(client, name = "Alice", email = "alice@example.com")
+    second_renter = create_renter(client, name = "Bob", email = "bob@example.com")
+    
+    first = create_rental(client, equipment_id = equipment["id"], renter_id = first_renter["id"])
+    second = create_rental(client, equipment_id = equipment["id"], renter_id = second_renter["id"])
+
+    response = client.get("/rentals")
+    assert response.status_code == 200
+
+    listed = response.get_json()
+    assert len(listed) == 2
+    assert {r["id"] for r in listed} == {first["id"], second["id"]}
+
+
+def test_filter_rentals_by_equipment_id(client):
+    """ Supplying equipment_id will only return rentals associated with that
+        equipment item.
+    """
+    
+    first_equipment = create_equipment(client, name = "Canoe")
+    second_equipment = create_equipment(client, name = "Tent", category = "Camping")
+
+    renter = create_renter(client)
+    first_rental = create_rental(client, equipment_id = first_equipment["id"], renter_id = renter["id"])
+    second_rental = create_rental(client, equipment_id = second_equipment["id"], renter_id = renter["id"])
+
+    response = client.get(f"/rentals?equipment_id = {first_equipment['id']}")
+    assert response.status_code == 200
+
+    listed = response.get_json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == first_rental["id"]
+    assert listed[0]["equipment_id"] == first_equipment["id"]
+    assert second_rental["id"] not in {r["id"] for r in listed}
+
+
+def test_filter_rentals_by_renter_id(client):
+    """ Supplying renter_id only returns rentals belonging to that renter.
+
+        The two IDs are purposefully different: renter_id = 2 and equipment_id = 1.
+        This test might expose the current implementation's bug, which compares
+        equipment_id with the renter_id query parameter.
+    """
+    
+    equipment = create_equipment(client)
+    first_renter = create_renter(client, name = "Alice", email = "alice@example.com")
+    second_renter = create_renter(client, name = "Bob", email = "bob@example.com")
+
+    # Created a rental with renter 2 and equipment 1
+    target_rental = create_rental(client, equipment_id = equipment["id"], renter_id = second_renter["id"])
+    assert second_renter["id"] != equipment["id"]
+
+    # Created a rental that should not appear in these results
+    other_rental = create_rental(client, equipment_id = equipment["id"], renter_id = first_renter["id"])
+
+    response = client.get(f"/rentals?renter_id = {second_renter['id']}")
+    assert response.status_code == 200
+
+    listed = response.get_json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == target_rental["id"]
+    assert listed[0]["renter_id"] == second_renter["id"]
+    assert other_rental["id"] not in {r["id"] for r in listed}
+
+
+def test_filter_rentals_by_both_ids(client):
+    """ When both query params are supplied, the results must satisfy
+        both the equipment and renter filters.
+    """
+    
+    first_equipment = create_equipment(client, name = "Canoe")
+    second_equipment = create_equipment(client, name = "Tent", category = "Camping")
+
+    first_renter = create_renter(client, name = "Alice", email = "alice@example.com")
+    second_renter = create_renter(client, name = "Bob", email = "bob@example.com")
+
+    target = create_rental(client, equipment_id = first_equipment["id"], renter_id = first_renter["id"])
+
+    create_rental(client, equipment_id = first_equipment["id"], renter_id = second_renter["id"])
+    create_rental(client, equipment_id = second_equipment["id"], renter_id = first_renter["id"])
+
+    response = client.get(
+        f"/rentals?equipment_id = {first_equipment['id']}"
+        f"&renter_id = {first_renter['id']}"
+    )
+    assert response.status_code == 200
+
+    listed = response.get_json()
+    assert len(listed) == 1
+    assert listed[0]["id"] == target["id"]
