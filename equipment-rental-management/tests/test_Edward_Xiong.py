@@ -575,3 +575,62 @@ def test_checkout_restored_equipment_succeeds(client):
 
     response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
     assert response.status_code == 201
+    
+    
+    
+# ============= Marking equipment as out of service Web UI Tests =============
+def test_ui_mark_equipment_out_of_service(client):
+    """ The equipment page can mark equipment as out of service or restore it.
+    """
+    
+    equipment = create_equipment(client)
+    url = f"/ui/equipment/{equipment['id']}/status"
+
+    # Mark equipment as out of service
+    response = client.post(url, data = {"is_available": "false"})
+    assert response.status_code == 302
+
+    equipment_response = client.get(f"/equipment/{equipment['id']}")
+    assert equipment_response.get_json()["is_available"] is False
+
+    # Restore equipment
+    response = client.post(url, data = {"is_available": "true"})
+    assert response.status_code == 302
+
+    equipment_response = client.get(f"/equipment/{equipment['id']}")
+    assert equipment_response.status_code == 200
+    assert equipment_response.get_json()["is_available"] is True
+    
+
+def test_ui_checkout_out_of_service_equipment_is_rejected(client):
+    """ The rentals page cannot checkout equipment that is out-of-service.
+    """
+    
+    equipment = create_equipment(client)
+    renter = create_renter(client)
+
+    # Mark equipment out of service
+    status_response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False},)
+    assert status_response.status_code == 200
+
+    before_units = client.get(f"/equipment/{equipment['id']}/availability").get_json()["available_units"]
+
+    # Checkout through the Web UI
+    response = client.post(
+        "/ui/rentals",
+        data = {
+            "equipment_id": equipment["id"],
+            "renter_id": renter["id"],
+            "deposit_amount": "",
+        },
+    )
+
+    assert response.status_code == 409
+    assert b"out of service" in response.data
+
+    # Check that no rental was created
+    assert client.get("/rentals").get_json() == []
+
+    # Check that available quantity did not change
+    after_units = client.get(f"/equipment/{equipment['id']}/availability").get_json()["available_units"]
+    assert after_units == before_units
