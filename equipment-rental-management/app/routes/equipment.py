@@ -75,8 +75,8 @@ def set_equipment_status(equipment_id):
     data = request.get_json(silent = True)
     
     # Only accepts Boolean values
-    if not isinstance(data, dict) or not isinstance(data.get("is_avialable"), bool):
-        return jsonify({"error": "is_available must be True or False"}), 400
+    if not isinstance(data, dict) or not isinstance(data.get("is_available"), bool):
+        return jsonify({"error": "is_available must be true or false"}), 400
     
     item.is_available = data["is_available"]
     return jsonify(item.to_dict()), 200
