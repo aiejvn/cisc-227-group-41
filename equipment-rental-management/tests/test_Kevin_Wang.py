@@ -426,6 +426,8 @@ def test_needs_deposit_defaults_to_false(client):
     assert client.get(f"/equipment/{data['id']}").get_json()["needs_deposit"] is False
 
 
+# White-box exception: checks the Equipment model directly instead of going through the API
+# Tests the object itself is stored and managed properly 
 def test_deposit_flag_lock_follows_rented_units():
     """
         The flag is locked exactly when some units are rented out, i.e. when
