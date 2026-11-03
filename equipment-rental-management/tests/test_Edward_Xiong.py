@@ -484,7 +484,7 @@ def test_mark_equipment_out_of_service(client):
     url = f"/equipment/{equipment['id']}/status"
     
     response = client.patch(url, json = {"is_available": False})
-    assert response.status_Code == 200
+    assert response.status_code == 200
     assert response.get_json()["is_available"] is False
     
     # Check to see if the changed status persists
@@ -542,7 +542,7 @@ def test_checkout_out_of_service_equipment_rejected(client):
     status_response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
     assert status_response.status_code == 200
     
-    before_units = client.get(f"/equipment/{equipment['id']}/availablity").get_json()["available_units"]
+    before_units = client.get(f"/equipment/{equipment['id']}/availability").get_json()["available_units"]
     
     response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
     assert response.status_code == 409
@@ -551,12 +551,12 @@ def test_checkout_out_of_service_equipment_rejected(client):
     # No rental should be created
     assert client.get("/rentals").get_json() == []
     
-    after = client.get(f"/equipment/{['id']}/availability").get_json()
+    after = client.get(f"/equipment/{equipment['id']}/availability").get_json()
     assert after["available_units"] == before_units
 
     # Available quantity should remain unchanged
     equipment_response = client.get(f"/equipment/{equipment['id']}").get_json()
-    assert equipment_response.get_json()["is_available"] is False
+    assert equipment_response["is_available"] is False
 
     
 def test_checkout_restored_equipment_succeeds(client):
