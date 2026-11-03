@@ -459,3 +459,44 @@ def test_filter_rentals_by_both_ids(client):
     listed = response.get_json()
     assert len(listed) == 1
     assert listed[0]["id"] == target["id"]
+
+
+
+# ============ Feature Enhancement: Mark equipment as out of service ============
+def test_equipment_defaults_to_in_service(client):
+    """ Newly added equipment should be set to available for default rentals. 
+    """
+    
+    data = create_equipment(client)
+    assert data["is_available"] is True
+    
+    reread = client.get(f"/equipment/{data['id']}").get_json()
+    assert reread["is_available"] is True
+    
+def test_mark_equipment_out_of_serive(client):
+    """ An employee can mark/toggle a piece of equipment as out of service,
+        and the change should persist.
+    """
+    
+    equipment = create_equipment(client)
+    
+    response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    assert response.status_Code == 200
+    assert response.get_json()["is_available"] is False
+    
+    reread = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert reread["is_available"] is False
+
+def test_restore_equipment_to_service(client):
+    """ After being fixed/repaired, we can restore a piece of equipment to
+        back in stock/service. 
+    """
+    
+    equipment = create_equipment(client)
+    
+    response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available" : True})
+    assert response.status_code == 200
+    assert response.get_json()["is_available"] is True
+
+
+# other testings coming later

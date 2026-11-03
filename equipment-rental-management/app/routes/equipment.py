@@ -67,12 +67,19 @@ def set_equipment_status(equipment_id):
     this flag. Out-of-service equipment can still be checked out — a test that
     marks equipment unavailable and then attempts a checkout will reveal this.
     """
+    
     item = store.equipment.get(equipment_id)
     if item is None:
         return jsonify({"error": "Equipment not found"}), 404
-    data = request.get_json()
+    
+    data = request.get_json(silent = True)
+    
+    # Only accepts Boolean values
+    if not isinstance(data, dict) or not isinstance(data.get("is_avialable"), bool):
+        return jsonify({"error": "is_available must be True or False"}), 400
+    
     item.is_available = data["is_available"]
-    return jsonify(item.to_dict())
+    return jsonify(item.to_dict()), 200
 
 
 @equipment_bp.route("/<int:equipment_id>/deposit", methods=["PATCH"])
