@@ -472,8 +472,9 @@ def test_equipment_defaults_to_in_service(client):
     
     reread = client.get(f"/equipment/{data['id']}").get_json()
     assert reread["is_available"] is True
+
     
-def test_mark_equipment_out_of_serive(client):
+def test_mark_equipment_out_of_service(client):
     """ An employee can mark/toggle a piece of equipment as out of service,
         and the change should persist.
     """
@@ -487,6 +488,7 @@ def test_mark_equipment_out_of_serive(client):
     reread = client.get(f"/equipment/{equipment['id']}").get_json()
     assert reread["is_available"] is False
 
+
 def test_restore_equipment_to_service(client):
     """ After being fixed/repaired, we can restore a piece of equipment to
         back in stock/service. 
@@ -499,4 +501,31 @@ def test_restore_equipment_to_service(client):
     assert response.get_json()["is_available"] is True
 
 
-# other testings coming later
+def test_mark_nonexistent_equipment_out_of_serivce(client):
+    """ Attempting to change the state of a nonexistent piece of 
+        equipment will return a 404.
+    """
+    
+    response = client.patch("/equipment/9999/status", json = {"is_available": False})
+    assert response.status_code == 404
+
+ 
+def test_checkout_out_of_service_equipment_rejected(client):
+    """ Equipment thats get marked as out of service cannot be rented, 
+        even when there are still units available.
+    """
+    
+    equipment = create_equipment(client, total_units=3)
+    renter = create_renter(client)
+
+    client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
+    assert response.status_code == 409
+    assert "error" in response.get_json()
+
+    # No rental should be created
+    assert client.get("/rentals").get_json() == []
+
+    # Available quantity should remain unchanged
+    reread = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert reread["available_units"] == equipment["available_units"]

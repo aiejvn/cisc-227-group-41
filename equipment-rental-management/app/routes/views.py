@@ -84,6 +84,23 @@ def bulk_set_deposit_flag_page():
             notice += f" Skipped {len(skipped)} because units are rented out: {names}."
     return render_equipment_page(notice=notice)
 
+@views_bp.route("/ui/equipment/<int:equipment_id>/status", methods=["POST"])
+def set_equipment_status_page(equipment_id):
+    """ Toggle whether a piece of equipment is available or out of service.
+    """
+
+    item = store.equipment.get(equipment_id)
+
+    if item is None:
+        return redirect(url_for("views.equipment_page"))
+
+    is_available = request.form.get("is_available")
+
+    if is_available not in ("true", "false"):
+        return render_equipment_page(error = "Choose whether the equipment is in service", status = 400,)
+
+    item.is_available = (is_available == "true")
+    return redirect(url_for("views.equipment_page"))
 
 @views_bp.route("/ui/equipment/<int:equipment_id>/delete", methods=["POST"])
 def delete_equipment_page(equipment_id):
@@ -114,6 +131,13 @@ def rentals_page():
         renter_id = int(request.form["renter_id"])
         item = store.equipment.get(equipment_id)
         if item is not None:
+            # Prevent checkout of equipment that is out of service
+            if not item.is_available:
+                return render_template(
+                    "rentals.html", 
+                    rentals = store.rentals.values(),
+                    error = "This equipment is out of service and cannot be rented",
+                ), 409
             try:
                 deposit_amount = float(request.form.get("deposit_amount") or 0.0)
             except ValueError:
