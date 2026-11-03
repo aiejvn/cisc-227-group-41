@@ -2,6 +2,21 @@
     Test assigned equipment and renter features.
 
     Tests that submit invalid input assert a 4xx status AND that no state changed.
+    
+    Testing Approach: Black-Box Input Partition Testing
+
+    We used black box testing, testing the functionality of our assigned features rather than testing the coverage of the original code. Each test was written from the README endpoint table, the entity fields, and our requirements in Table A.
+    Every test uses the app only through its public interface: JSON API requests, or HTML form posts for the deposit pages. For valid input, we check the response fields and then send a follow-up GET to confirm the change was saved. For invalid input, we check that the request is rejected with a 4xx and that nothing internal has changed.
+    By definition of black box testing, the tests do not rely heavily on internal variables or functions. Given that one of our requirements was to make the app easily extendable for future development, ensuring tests are independent of the system's code is a must. Thus, we chose black box testing.
+
+    Choosing Input Partitions:
+    
+    To make input coverage feasible, we split the possible input values into equivalence partitions, and then tested at least one value from each group. We decided the partitions in four ways:
+
+    1. Field type: each field's expected type comes from the README. Since a JSON request can send anything, we also tested each field as missing, null, and the wrong type.
+    2. Business rules: rules from the README and our requirements, such as units being positive and available units never exceeding total units.
+    3. Boundaries: values right at the edge of a rule, tested on both sides, such as 0 and 1 units, or a deposit of 0 and 0.01.
+    4. State: inputs that should behave differently depending on earlier actions, such as an existing id versus a deleted one, or an item with units rented out versus one with none.
 """
 import pytest
 from datetime import date
