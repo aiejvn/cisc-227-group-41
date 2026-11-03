@@ -963,7 +963,6 @@ def test_create_renter(client):
         A created renter is returned with its fields, gets a membership date of
         today, and is persisted (visible on GET and in the list).
     """
-    from datetime import datetime as date
     create_response = client.post("/renters", json={
         "name": "Alice Smith",
         "email": "alice@example.com"
