@@ -29,6 +29,31 @@
       </form>
     </td>
     <td>
+      <form class = "status-form"
+            method = "post"
+            action = "{{ url_for('views.set_equipment_status_page', equipment_id = item.id) }}">
+
+          <input type = "hidden"
+                 name = "is_available"
+                 value = "{{ 'false' if item.is_available else 'true' }}">
+
+          <input type = "checkbox"
+                 aria-label = "Equipment in service: {{ item.name }}"
+                 {% if item.is_available %}checked{% endif %}
+                 onchange = "this.form.submit()">
+
+          {% if item.is_available %}
+              <span>In Service</span>
+          {% else %}
+              <span class = "out-of-service">Out of Service</span>
+          {% endif %}
+
+          <noscript>
+              <button type = "submit">Save</button>
+          </noscript>
+      </form>
+    </td>
+    <td>
       <form class="delete-form" method="post" action="{{ url_for('views.delete_equipment_page', equipment_id=item.id) }}">
         <button type="submit">Delete</button>
       </form>

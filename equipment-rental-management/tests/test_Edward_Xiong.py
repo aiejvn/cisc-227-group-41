@@ -467,11 +467,12 @@ def test_equipment_defaults_to_in_service(client):
     """ Newly added equipment should be set to available for default rentals. 
     """
     
-    data = create_equipment(client)
-    assert data["is_available"] is True
+    equipment = create_equipment(client)
+    assert equipment["is_available"] is True
     
-    reread = client.get(f"/equipment/{data['id']}").get_json()
-    assert reread["is_available"] is True
+    response = client.get(f"/equipment/{equipment['id']}")
+    assert response.status_code == 200
+    assert response.get_json()["is_available"] is True
 
     
 def test_mark_equipment_out_of_service(client):
@@ -480,25 +481,21 @@ def test_mark_equipment_out_of_service(client):
     """
     
     equipment = create_equipment(client)
+    url = f"/equipment/{equipment['id']}/status"
     
-    response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    response = client.patch(url, json = {"is_available": False})
     assert response.status_Code == 200
     assert response.get_json()["is_available"] is False
     
-    reread = client.get(f"/equipment/{equipment['id']}").get_json()
-    assert reread["is_available"] is False
-
-
-def test_restore_equipment_to_service(client):
-    """ After being fixed/repaired, we can restore a piece of equipment to
-        back in stock/service. 
-    """
+    # Check to see if the changed status persists
+    get_response = client.get(f"/equipment/{equipment['id']}")
+    assert get_response.status_code == 200
+    assert get_response.get_json()["is_available"] is False
     
-    equipment = create_equipment(client)
-    
-    response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available" : True})
-    assert response.status_code == 200
-    assert response.get_json()["is_available"] is True
+    # Restore equipment to the in-service status
+    restored = client.patch(url, json = {"is_available": True})
+    assert restored.status_code == 200
+    assert restored.get_json()["is_available"] is True
 
 
 def test_mark_nonexistent_equipment_out_of_serivce(client):
@@ -508,8 +505,32 @@ def test_mark_nonexistent_equipment_out_of_serivce(client):
     
     response = client.patch("/equipment/9999/status", json = {"is_available": False})
     assert response.status_code == 404
+    assert "error" in response.get_json()
 
- 
+
+@pytest.mark.parametrize("bad_payload", [
+    {},
+    {"is_available": "false"},
+    {"is_available": "yes"},
+    {"is_available": 1},
+    {"is_available": None},
+    {"is_available": []},
+    {"is_available": {}},
+])
+def test_equipment_status_invalid_value(client, bad_payload):
+    """ Only Boolean true or false values are accepted. Invalid values return a 400 
+    and do not change the status.
+    """
+    
+    equipment = create_equipment(client)
+
+    response = client.patch(f"/equipment/{equipment['id']}/status", json = bad_payload)
+    assert response.status_code == 400
+
+    get_response = client.get(f"/equipment/{equipment['id']}")
+    assert get_response.get_json()["is_available"] is True
+
+
 def test_checkout_out_of_service_equipment_rejected(client):
     """ Equipment thats get marked as out of service cannot be rented, 
         even when there are still units available.
@@ -518,14 +539,39 @@ def test_checkout_out_of_service_equipment_rejected(client):
     equipment = create_equipment(client, total_units=3)
     renter = create_renter(client)
 
-    client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    status_response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    assert status_response.status_code == 200
+    
+    before_units = client.get(f"/equipment/{equipment['id']}/availablity").get_json()["available_units"]
+    
     response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
     assert response.status_code == 409
     assert "error" in response.get_json()
 
     # No rental should be created
     assert client.get("/rentals").get_json() == []
+    
+    after = client.get(f"/equipment/{['id']}/availability").get_json()
+    assert after["available_units"] == before_units
 
     # Available quantity should remain unchanged
-    reread = client.get(f"/equipment/{equipment['id']}").get_json()
-    assert reread["available_units"] == equipment["available_units"]
+    equipment_response = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert equipment_response.get_json()["is_available"] is False
+
+    
+def test_checkout_restored_equipment_succeeds(client):
+    """ After equipment has been restored to back in service, it can be
+        rented and checked out like normal again.
+    """
+    
+    equipment = create_equipment(client)
+    renter = create_renter(client)
+
+    out_of_service = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    assert out_of_service.status_code == 200
+    
+    restored = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": True})
+    assert restored.status_code == 200
+
+    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
+    assert response.status_code == 201
