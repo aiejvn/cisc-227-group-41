@@ -18,6 +18,7 @@
     3. Boundaries: values right at the edge of a rule, tested on both sides, such as 0 and 1 units, or a deposit of 0 and 0.01.
     4. State: inputs that should behave differently depending on earlier actions, such as an existing id versus a deleted one, or an item with units rented out versus one with none.
 """
+import re
 import pytest
 from datetime import date
 
@@ -902,8 +903,12 @@ def test_equipment_page_shows_deposit_state(client):
     rent_one_unit(client, rented)
 
     html = client.get("/ui/equipment").get_data(as_text=True)
-    assert html.count("checked") == 1
-    assert html.count("disabled") == 1
+
+    # Only look at the deposit checkboxes: the page also has service-status checkboxes
+    deposit_boxes = re.findall(r'<input type="checkbox" aria-label="Needs deposit for[^>]*>', html)
+    assert len(deposit_boxes) == 3
+    assert sum("checked" in box for box in deposit_boxes) == 1
+    assert sum("disabled" in box for box in deposit_boxes) == 1
     assert "locked while rented out" in html
 
 
