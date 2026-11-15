@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Rentals</h1>
+{% for rental_id, warning in (warnings or {}).items() %}
+<div class="error">{{ warning }}
+  <form class="delete-form" method="post" action="{{ url_for('views.dismiss_reminder_warning', rental_id=rental_id) }}">
+    <button type="submit" aria-label="Dismiss warning">X</button>
+  </form>
+</div>
+{% endfor %}
 <table>
   <tr>
     <th>ID</th><th>Equipment ID</th><th>Renter ID</th><th>Rental Date</th><th>Due Date</th><th>Return Date</th><th></th>

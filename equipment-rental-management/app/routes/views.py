@@ -136,6 +136,7 @@ def rentals_page():
                 return render_template(
                     "rentals.html", 
                     rentals = store.rentals.values(),
+                    warnings = store.reminder_warnings,
                     error = "This equipment is out of service and cannot be rented",
                 ), 409
             try:
@@ -144,7 +145,10 @@ def rentals_page():
                 deposit_amount = None  # not a number; flagged items will reject it
             problem = item.deposit_problem(deposit_amount)
             if problem is not None:
-                return render_template("rentals.html", rentals=store.rentals.values(), error=problem), 400
+                return render_template(
+                    "rentals.html", rentals=store.rentals.values(),
+                    warnings=store.reminder_warnings, error=problem,
+                ), 400
             item.available_units -= 1
             rental_id = store.next_id("rental")
             rental = Rental(
@@ -156,7 +160,9 @@ def rentals_page():
             )
             store.rentals[rental_id] = rental
         return redirect(url_for("views.rentals_page"))
-    return render_template("rentals.html", rentals=store.rentals.values())
+    return render_template(
+        "rentals.html", rentals=store.rentals.values(), warnings=store.reminder_warnings
+    )
 
 
 @views_bp.route("/ui/rentals/<int:rental_id>/return", methods=["POST"])
@@ -167,4 +173,10 @@ def return_rental_page(rental_id):
         item = store.equipment.get(rental.equipment_id)
         if item is not None:
             item.available_units += 1
+    return redirect(url_for("views.rentals_page"))
+
+
+@views_bp.route("/ui/rentals/warnings/<int:rental_id>/dismiss", methods=["POST"])
+def dismiss_reminder_warning(rental_id):
+    store.reminder_warnings.pop(rental_id, None)
     return redirect(url_for("views.rentals_page"))
