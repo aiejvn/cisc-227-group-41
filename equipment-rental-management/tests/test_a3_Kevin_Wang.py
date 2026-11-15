@@ -1,8 +1,10 @@
-"""Success-path tests for the daily equipment return reminder.
+"""Member A work allocaiton:
+    - Happy-path tests for the daily equipment return reminder
+    - Additional tests for app/ to achieve >= 90% line coverage
 
 send_notification is mocked where the app uses it (app.routes.rentals) so the
 test can check the exact recipient, subject, and message. One test uses the
-real simulator, clearing it before and after.
+real notification service, clearing it before and after.
 """
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -44,7 +46,7 @@ def add_well_formed_rental(due_date=TODAY):
 
 @pytest.fixture(autouse=True)
 def clean_state(client):
-    """The client fixture resets the store. Isolates the real simulator."""
+    """The client fixture resets the store. Isolates the real notification service."""
     notification_service.clear_notifications()
     yield
     notification_service.clear_notifications()
@@ -87,7 +89,7 @@ def test_defaults_to_todays_date():
     mock_send.assert_called_once()
 
 
-def test_real_simulator_records_reminder():
+def test_real_notification_service_records_reminder():
     add_well_formed_rental()
     assert send_due_reminders(TODAY) == [1]
     assert notification_service.get_notifications() == [{
