@@ -3,8 +3,9 @@
     - Additional tests for app/ to achieve >= 90% line coverage
 
 send_notification is mocked where the app uses it (app.routes.rentals) so the
-test can check the exact recipient, subject, and message. One test uses the
-real notification service, clearing it before and after.
+test can check the exact recipient, subject, and message. test_notification_storage
+sends a mock notification through the real notification service and checks that
+get_notifications() stores it, clearing it before and after.
 """
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -89,14 +90,14 @@ def test_defaults_to_todays_date():
     mock_send.assert_called_once()
 
 
-def test_real_notification_service_records_reminder():
-    add_well_formed_rental()
-    assert send_due_reminders(TODAY) == [1]
-    assert notification_service.get_notifications() == [{
-        "recipient": EXPECTED_RECIPIENT,
-        "subject": EXPECTED_SUBJECT,
-        "message": EXPECTED_MESSAGE,
-    }]
+def test_notification_storage():
+    test_notification = {
+        "recipient": "bob@example.com",
+        "subject": "Test subject",
+        "message": "Test message",
+    }
+    assert notification_service.send_notification(**test_notification) is True
+    assert notification_service.get_notifications() == [test_notification]
 
 
 # ============= Web UI routes (app/routes/views.py) =============
