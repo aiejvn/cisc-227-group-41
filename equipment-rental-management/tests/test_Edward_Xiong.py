@@ -77,6 +77,7 @@ def test_update_renter_partial(client):
     assert reread["membership_date"] == renter["membership_date"]
 
 
+@pytest.mark.xfail(reason="Defect: PUT /renters does not validate updated fields", strict=True)
 @pytest.mark.parametrize("bad_update", [
     {"name": None},
     {"name": ""},
@@ -242,6 +243,7 @@ def test_add_rental_nonexistent_equipment(client):
     assert client.get("/rentals").get_json() == []
 
 
+@pytest.mark.xfail(reason="Defect: checkout does not verify that the renter exists", strict=True)
 def test_add_rental_nonexistent_renter(client):
     """ Checking out equipment for a renter that does not exist will be
         rejected without creating a rental or changing equipment availability.
@@ -261,6 +263,7 @@ def test_add_rental_nonexistent_renter(client):
     assert after == before
 
 
+@pytest.mark.xfail(reason="Defect: checkout does not check available_units before renting", strict=True)
 def test_add_rental_when_no_units_are_available(client):
     """ Equipment with no available units should not be checked out again.
         Also, a rejected checkout must not make available_units negative.

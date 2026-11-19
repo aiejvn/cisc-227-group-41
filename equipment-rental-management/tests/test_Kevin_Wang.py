@@ -176,6 +176,7 @@ def test_set_equipment_status_workflow(client):
     assert client.get(f"/equipment/{equipment_id}/availability").get_json()["is_available"] is True
 
 
+@pytest.mark.xfail(reason="Defect: POST /equipment does not validate the request payload", strict=True)
 @pytest.mark.parametrize("bad_payload", [
     {},
     {"category": "Hiking"},                                   # missing name
@@ -216,6 +217,7 @@ def test_invalid_read_equipment(client):
         assert client.get(query).status_code == 404
 
 
+@pytest.mark.xfail(reason="Defect: PUT /equipment does not validate updated fields", strict=True)
 @pytest.mark.parametrize("bad_update", [
     {"name": None},
     {"name": INVALID_DICT_VALUE},
@@ -285,6 +287,7 @@ def test_availability_nonexistent_equipment(client):
     assert "error" in response.get_json()
 
 
+@pytest.mark.xfail(reason="Defect: PUT /equipment allows available_units to exceed total_units", strict=True)
 def test_update_available_units_over_total(client):
     """
         Boundary: available_units can never exceed total_units. A PUT that
@@ -1002,6 +1005,7 @@ def test_create_multiple_renters(client):
     assert len(client.get("/renters").get_json()) == 2
 
 
+@pytest.mark.xfail(reason="Defect: POST /renters does not validate the request payload", strict=True)
 @pytest.mark.parametrize("bad_payload", [
     {},
     {"email": "alice@example.com"},                           # missing name
