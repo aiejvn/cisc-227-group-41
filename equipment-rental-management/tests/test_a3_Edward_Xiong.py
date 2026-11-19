@@ -330,3 +330,205 @@ def make_returned_rental(client):
     assert client.put(f"/rentals/{rental['id']}/return").status_code == 200
     return equipment, rental
 
+
+# ====================== list_rentals: filters ======================
+
+def test_filter_rentals_by_equipment_id_returns_only_matching(client):
+    """Only rentals for the requested equipment are returned."""
+    canoe = make_equipment(client, name="Canoe")
+    tent = make_equipment(client, name="Tent", category="Camping")
+    renter = make_renter(client)
+    canoe_rental = make_rental(client, canoe["id"], renter["id"])
+    make_rental(client, tent["id"], renter["id"])
+
+    response = client.get(f"/rentals?equipment_id={canoe['id']}")
+
+    assert response.status_code == 200
+    listed = response.get_json()
+    assert [r["id"] for r in listed] == [canoe_rental["id"]]
+    assert listed[0]["equipment_id"] == canoe["id"]
+
+
+def test_filter_rentals_with_no_match_returns_empty_list(client):
+    """Boundary: a filter that matches nothing gives 200 and an empty list."""
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    make_rental(client, equipment["id"], renter["id"])
+
+    response = client.get("/rentals?equipment_id=9999")
+
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+
+@pytest.mark.xfail(
+    reason="Known defect: list_rentals compares rental.equipment_id (not "
+           "renter_id) with the renter_id query parameter, so filtering by "
+           "renter returns the wrong rentals.",
+)
+def test_filter_rentals_by_renter_id_returns_only_that_renters_rentals(client):
+    """Renter id 2 and equipment id 1 are deliberately different so the
+    wrong-field comparison cannot pass by coincidence."""
+    equipment = make_equipment(client)
+    first_renter = make_renter(client, name="Alice", email="alice@example.com")
+    second_renter = make_renter(client, name="Bob", email="bob@example.com")
+    make_rental(client, equipment["id"], first_renter["id"])
+    target = make_rental(client, equipment["id"], second_renter["id"])
+    assert second_renter["id"] != equipment["id"]
+
+    response = client.get(f"/rentals?renter_id={second_renter['id']}")
+
+    assert response.status_code == 200
+    listed = response.get_json()
+    assert [r["id"] for r in listed] == [target["id"]]
+    assert listed[0]["renter_id"] == second_renter["id"]
+
+
+# ================= return_equipment: already returned =================
+
+def test_return_rental_twice_is_rejected_and_units_unchanged(client):
+    """A second return gives 400 and must not add another unit back."""
+    equipment, rental = make_returned_rental(client)
+    units_after_first_return = client.get(f"/equipment/{equipment['id']}").get_json()[
+        "available_units"
+    ]
+
+    response = client.put(f"/rentals/{rental['id']}/return")
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+    reread = client.get(f"/equipment/{equipment['id']}").get_json()
+    assert reread["available_units"] == units_after_first_return
+    assert reread["available_units"] <= reread["total_units"]
+
+
+# ========================= extend_rental =========================
+
+def test_extend_rental_defaults_to_one_day(client):
+    """With no 'days' value, the due date moves back by exactly one day."""
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    rental = make_rental(client, equipment["id"], renter["id"])
+    original_due = date.fromisoformat(rental["due_date"])
+
+    response = client.put(f"/rentals/{rental['id']}/extend", json={})
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["id"] == rental["id"]
+    assert body["due_date"] == (original_due + timedelta(days=1)).isoformat()
+
+
+def test_extend_rental_by_custom_days_is_persisted(client):
+    """A custom extension is applied and visible in later rental listings."""
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    rental = make_rental(client, equipment["id"], renter["id"])
+    original_due = date.fromisoformat(rental["due_date"])
+
+    response = client.put(f"/rentals/{rental['id']}/extend", json={"days": 5})
+
+    assert response.status_code == 200
+    expected_due = (original_due + timedelta(days=5)).isoformat()
+    assert response.get_json()["due_date"] == expected_due
+    listed = client.get("/rentals").get_json()
+    assert [r["due_date"] for r in listed if r["id"] == rental["id"]] == [expected_due]
+
+
+def test_extend_rental_can_be_repeated(client):
+    """Two extensions add up."""
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    rental = make_rental(client, equipment["id"], renter["id"])
+    original_due = date.fromisoformat(rental["due_date"])
+
+    client.put(f"/rentals/{rental['id']}/extend", json={"days": 2})
+    response = client.put(f"/rentals/{rental['id']}/extend", json={"days": 3})
+
+    assert response.status_code == 200
+    assert response.get_json()["due_date"] == (original_due + timedelta(days=5)).isoformat()
+
+
+def test_extend_nonexistent_rental_returns_404(client):
+    response = client.put("/rentals/9999/extend", json={"days": 2})
+
+    assert response.status_code == 404
+    assert "error" in response.get_json()
+    assert client.get("/rentals").get_json() == []
+
+
+def test_extend_returned_rental_is_rejected_and_due_date_unchanged(client):
+    """A rental that is already returned cannot be extended."""
+    _, rental = make_returned_rental(client)
+
+    response = client.put(f"/rentals/{rental['id']}/extend", json={"days": 3})
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+    listed = client.get("/rentals").get_json()
+    assert [r["due_date"] for r in listed if r["id"] == rental["id"]] == [rental["due_date"]]
+
+
+@pytest.mark.xfail(
+    reason="Known defect: extend_rental does not validate 'days'. A "
+           "non-numeric value raises an unhandled TypeError (HTTP 500) "
+           "instead of a 4xx response.",
+)
+def test_extend_rental_with_non_numeric_days_is_rejected(client):
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    rental = make_rental(client, equipment["id"], renter["id"])
+
+    response = client.put(f"/rentals/{rental['id']}/extend", json={"days": "abc"})
+
+    assert 400 <= response.status_code < 500
+    listed = client.get("/rentals").get_json()
+    assert [r["due_date"] for r in listed if r["id"] == rental["id"]] == [rental["due_date"]]
+
+
+# ======================== release_deposit ========================
+
+def test_release_deposit_nonexistent_rental_returns_404(client):
+    response = client.put("/rentals/9999/deposit/release")
+
+    assert response.status_code == 404
+    assert "error" in response.get_json()
+
+
+def test_release_deposit_before_return_is_rejected(client):
+    """The deposit can't be released while the equipment is still out."""
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    rental = make_rental(client, equipment["id"], renter["id"])
+
+    response = client.put(f"/rentals/{rental['id']}/deposit/release")
+
+    assert response.status_code == 400
+    assert "error" in response.get_json()
+    listed = client.get("/rentals").get_json()
+    assert [r["deposit_released"] for r in listed if r["id"] == rental["id"]] == [False]
+
+
+def test_release_deposit_for_returned_rental_reports_released(client):
+    """The response for a returned rental says the deposit was released."""
+    _, rental = make_returned_rental(client)
+
+    response = client.put(f"/rentals/{rental['id']}/deposit/release")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"rental_id": rental["id"], "deposit_released": True}
+
+
+@pytest.mark.xfail(
+    reason="Known defect (documented in rentals.py): release_deposit returns "
+           "deposit_released=true but never sets rental.deposit_released, so "
+           "the change is not persisted.",
+)
+def test_release_deposit_is_persisted(client):
+    _, rental = make_returned_rental(client)
+
+    response = client.put(f"/rentals/{rental['id']}/deposit/release")
+    assert response.status_code == 200
+
+    listed = client.get("/rentals").get_json()
+    assert [r["deposit_released"] for r in listed if r["id"] == rental["id"]] == [True]
