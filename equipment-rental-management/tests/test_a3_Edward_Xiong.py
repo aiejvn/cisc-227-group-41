@@ -1,6 +1,6 @@
 """"Member B work allocations:
 
-Part 1 - Notification tests (failure and non-trigger paths) for the daily equiment return reminder 
+Part 1 - Notification tests (failure and non-trigger paths) for the daily equipment return reminder 
 in app/routes/rentals.py and the warning dismiss route in app/routes/views.py:
     - send_notification is stubbed to return False, or the real simulator is
     put into an outage, and the app's response and state are checked
@@ -44,7 +44,7 @@ def clean_notifications(client):
     yield
     notification_service.clear_notifications()
     
-# ================== Part 1: reminder helpers (store setup) ==================
+# ================== Part 1: Reminder helpers (store setup) ==================
 
 def add_reminder_rental(rental_id=1, due_date=TODAY, return_date=None,
                         renter_name="Alice", email="alice@example.com",
@@ -65,7 +65,7 @@ def add_reminder_rental(rental_id=1, due_date=TODAY, return_date=None,
     return store.rentals[rental_id]
 
 
-# ===================== Part 1: failed notification =====================
+# ===================== Part 1: Failed notification =====================
 
 def test_failed_send_is_not_reported_and_rental_is_unchanged():
     """Stub: send_notification fails. The rental is not reported as reminded
@@ -89,7 +89,7 @@ def test_failed_send_is_logged(caplog):
         result = send_due_reminders(TODAY)
 
     assert result == []
-    assert caplog.records  # the failure was logged
+    assert caplog.records   # logged failure
 
 
 def test_failed_send_does_not_stop_later_rentals():
@@ -117,7 +117,7 @@ def test_service_outage_records_nothing_and_reports_no_reminders():
     assert notification_service.get_notifications() == []
 
 
-# ============== Part 1: non-trigger paths (no call is made) ==============
+# ============== Part 1: Non-trigger paths (no call is made) ==============
 
 def test_no_reminder_for_returned_rental():
     add_reminder_rental(return_date=TODAY - timedelta(days=1))
@@ -163,7 +163,7 @@ def test_only_due_rental_is_reminded_among_several():
     assert mock_send.call_args.args[0] == "alice@example.com"
 
 
-# ====== Part 1: rentals that cannot get a reminder (reminder_problem) ======
+# ====== Part 1: Rentals that cannot get a reminder (reminder_problem) ======
 
 def unmakable_rental(kind):
     """Build a rental that cannot get a reminder, for the given cause."""
@@ -199,7 +199,8 @@ def test_flagged_rental_sends_nothing_and_stores_warning(kind):
 
 
 def test_flagged_rental_does_not_block_valid_rental():
-    unmakable_rental("blank_email")                       # rental #1 is flagged
+    # Rental 1 is flagged
+    unmakable_rental("blank_email")
     add_reminder_rental(rental_id=2, renter_name="Bob", email="bob@example.com")
     with patch(SEND, return_value=True) as mock_send:
         result = send_due_reminders(TODAY)
@@ -227,3 +228,105 @@ def test_flagged_rental_is_logged(caplog):
         send_due_reminders(TODAY)
 
     assert caplog.records
+
+
+# ============ Part 1: Warning on the Rentals page and dismiss ============
+
+def dismiss_url(rental_id):
+    return f"/ui/rentals/warnings/{rental_id}/dismiss"
+
+
+def test_rentals_page_shows_warning_with_dismiss_control(client):
+    unmakable_rental("blank_email")
+    with patch(SEND):
+        send_due_reminders(TODAY)
+
+    response = client.get("/ui/rentals")
+
+    assert response.status_code == 200
+    assert dismiss_url(1) in response.get_data(as_text=True)
+
+
+def test_rentals_page_has_no_dismiss_control_without_warning(client):
+    add_reminder_rental()
+    response = client.get("/ui/rentals")
+
+    assert response.status_code == 200
+    assert "/warnings/" not in response.get_data(as_text=True)
+
+
+def test_dismiss_warning_removes_it_from_store_and_page(client):
+    unmakable_rental("missing_renter")
+    with patch(SEND):
+        send_due_reminders(TODAY)
+    assert 1 in store.reminder_warnings
+
+    response = client.post(dismiss_url(1))
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/ui/rentals")
+    assert store.reminder_warnings == {}
+    assert dismiss_url(1) not in client.get("/ui/rentals").get_data(as_text=True)
+
+
+def test_dismiss_only_removes_the_chosen_warning(client):
+    unmakable_rental("blank_email")
+    add_reminder_rental(rental_id=2, with_renter=False)
+    with patch(SEND):
+        send_due_reminders(TODAY)
+    assert sorted(store.reminder_warnings) == [1, 2]
+
+    response = client.post(dismiss_url(1))
+
+    assert response.status_code == 302
+    assert list(store.reminder_warnings) == [2]
+
+
+def test_dismiss_unknown_warning_is_harmless(client):
+    unmakable_rental("blank_email")
+    with patch(SEND):
+        send_due_reminders(TODAY)
+
+    response = client.post(dismiss_url(999))
+
+    assert response.status_code == 302
+    assert list(store.reminder_warnings) == [1]
+
+
+# ============== Part 2: Helpers for the rentals.py routes ==============
+
+def make_equipment(client, **overrides):
+    payload = {"name": "Canoe", "category": "Hiking", "total_units": 3}
+    payload.update(overrides)
+    response = client.post("/equipment", json=payload)
+    assert response.status_code == 201
+    return response.get_json()
+
+
+def make_renter(client, **overrides):
+    payload = {"name": "Alice Smith", "email": "alice@example.com"}
+    payload.update(overrides)
+    response = client.post("/renters", json=payload)
+    assert response.status_code == 201
+    return response.get_json()
+
+
+def make_rental(client, equipment_id, renter_id):
+    """Check out one unit. Equipment is not flagged for a deposit, so the
+    deposit must be 0 (a non-zero deposit is rejected with a 400)."""
+    response = client.post(
+        "/rentals",
+        json={"equipment_id": equipment_id, "renter_id": renter_id, "deposit_amount": 0.0},
+    )
+    assert response.status_code == 201
+    return response.get_json()
+
+
+def make_returned_rental(client):
+    """Create a rental, return it, and give back (equipment, rental)."""
+    equipment = make_equipment(client)
+    renter = make_renter(client)
+    rental = make_rental(client, equipment["id"], renter["id"])
+    assert client.put(f"/rentals/{rental['id']}/return").status_code == 200
+    return equipment, rental
+
