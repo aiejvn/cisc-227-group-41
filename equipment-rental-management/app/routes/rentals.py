@@ -1,88 +1,11 @@
-import logging
-import threading
 from datetime import date, timedelta
 
 from flask import Blueprint, jsonify, request
 
-import notification_service
 from app import store
 from app.models.rental import Rental
 
-logger = logging.getLogger(__name__)
-
 rentals_bp = Blueprint("rentals", __name__, url_prefix="/rentals")
-
-REMINDER_INTERVAL_SECONDS = 24 * 60 * 60
-
-
-def build_return_reminder(rental):
-    """Return (recipient, subject, message) for a well-formed rental."""
-    renter = store.renters[rental.renter_id]
-    item = store.equipment[rental.equipment_id]
-    subject = f"Reminder: please return {item.name} today"
-    message = (
-        f"Hi {renter.name}, this is a friendly reminder that your rental of "
-        f"{item.name} (rental #{rental.id}) is due back today, "
-        f"{rental.due_date.isoformat()}. Thank you!"
-    )
-    return renter.email, subject, message
-
-
-def reminder_problem(rental):
-    """Return why a rental can't get a reminder, or None if it is well formed."""
-    renter = store.renters.get(rental.renter_id)
-    if renter is None:
-        return f"Renter #{rental.renter_id} does not exist"
-    
-    if not isinstance(renter.email, str) or not renter.email.strip():
-        return f"Renter #{renter.id} ({renter.name}) has no email address"
-    
-    if store.equipment.get(rental.equipment_id) is None:
-        return f"Equipment #{rental.equipment_id} does not exist"
-    
-    return None
-
-
-def send_due_reminders(today=None):
-    """Send a return reminder for every unreturned rental due today.
-
-    Returned rentals are skipped. A malformed rental is logged and posted to
-    store.reminder_warnings for the rentals page. A failed send is logged and
-    the loop continues. 
-    
-    Returns the ids of rentals that were reminded.
-    """
-    today = today or date.today()
-    reminded = []
-    for rental in list(store.rentals.values()):
-        if rental.return_date is not None or rental.due_date != today:
-            continue
-
-        problem = reminder_problem(rental)
-        if problem is not None:
-            warning = f"Rental #{rental.id} could not be reminded: {problem}"
-            logger.warning(warning)
-            store.reminder_warnings[rental.id] = warning
-            continue
-
-        if notification_service.send_notification(*build_return_reminder(rental)):
-            reminded.append(rental.id)
-        else:
-            logger.error("Return reminder for rental #%s failed to send", rental.id)
-    return reminded
-
-
-def start_reminder_timer():
-    """Run the reminder check now, then every 24 hours, on a daemon thread.
-
-    Called once from the entry point (run.py), never on import, so tests and
-    other importers don't start a timer.
-    """
-    send_due_reminders()
-    timer = threading.Timer(REMINDER_INTERVAL_SECONDS, start_reminder_timer)
-    timer.daemon = True
-    timer.start()
-    return timer
 
 
 @rentals_bp.route("", methods=["GET"])
