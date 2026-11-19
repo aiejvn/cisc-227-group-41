@@ -32,7 +32,7 @@ def create_renter(client, **overrides):
 
 def create_rental(client, equipment_id, renter_id, **overrides):
     """Helper: creates a rental and returns its JSON body."""
-    payload = {"equipment_id": equipment_id, "renter_id": renter_id, "deposit_amount": 25.0}
+    payload = {"equipment_id": equipment_id, "renter_id": renter_id, "deposit_amount": 0.0}
     payload.update(overrides)
     response = client.post("/rentals", json=payload)
     assert response.status_code == 201
@@ -48,7 +48,7 @@ def test_update_renter(client):
     renter = create_renter(client)
     update_payload = {"name": "Alice Jones", "email": "alicejones@example.com"}
     
-    response = client.put(f"/renters/{renter['id']}", json = update_payload)
+    response = client.put(f"/renters/{renter['id']}", json=update_payload)
 
     assert response.status_code == 200
     updated = response.get_json()
@@ -68,7 +68,7 @@ def test_update_renter_partial(client):
     
     renter = create_renter(client)
     
-    response = client.put(f"/renters{renter['id']}", json = {"name": "Alice Mace"})
+    response = client.put(f"/renters/{renter['id']}", json={"name": "Alice Mace"})
     assert response.status_code == 200
     
     reread = client.get(f"/renters/{renter['id']}").get_json()
@@ -97,7 +97,7 @@ def test_invalid_update_renter(client, bad_update):
     
     renter = create_renter(client)
     
-    response = client.put(f"/renters/{renter['id']}", json = bad_update)
+    response = client.put(f"/renters/{renter['id']}", json=bad_update)
     assert 400 <= response.status_code < 500
     assert client.get(f"/renters/{renter['id']}").get_json() == renter
 
@@ -107,7 +107,7 @@ def test_update_nonexistant_renter(client):
         does nothing.
     """
     
-    response = client.put(f"/renters/9999", json = {"name": "Unknown Unknown"})    
+    response = client.put(f"/renters/9999", json={"name": "Unknown Unknown"})    
     assert response.status_code == 404
     assert "error" in response.get_json()
     assert client.get("/renters").get_json() == []
@@ -141,7 +141,7 @@ def test_list_renters_reflects_updates(client):
     
     renter = create_renter(client)
     
-    response = client.put(f"/renters/{renter['id']}", json = {"name": "Alice Updated"})
+    response = client.put(f"/renters/{renter['id']}", json={"name": "Alice Updated"})
     assert response.status_code == 200
     
     listed = client.get("/renters").get_json()
@@ -195,6 +195,10 @@ def test_add_rental(client):
     
     equipment = create_equipment(client)
     renter = create_renter(client)
+    
+    # This item requires a deposit before a non-zero deposit is accepted
+    flag = client.patch(f"/equipment/{equipment['id']}/deposit", json={"needs_deposit": True})
+    assert flag.status_code == 200
 
     rental = create_rental(
         client,
@@ -223,7 +227,7 @@ def test_add_rental_decreases_available_units(client):
     equipment = create_equipment(client, total_units=3)
     renter = create_renter(client)
 
-    create_rental(client, equipment_id = equipment["id"], renter_id = renter["id"])
+    create_rental(client, equipment_id=equipment["id"], renter_id=renter["id"])
 
     reread = client.get(f"/equipment/{equipment['id']}").get_json()
     assert reread["total_units"] == 3
@@ -236,7 +240,7 @@ def test_add_rental_nonexistent_equipment(client):
     """
     renter = create_renter(client)
 
-    response = client.post("/rentals", json = {"equipment_id": 9999, "renter_id": renter["id"]})
+    response = client.post("/rentals", json={"equipment_id": 9999, "renter_id": renter["id"]})
     assert response.status_code == 404
     assert "error" in response.get_json()
     assert client.get("/rentals").get_json() == []
@@ -253,7 +257,7 @@ def test_add_rental_nonexistent_renter(client):
     equipment = create_equipment(client)
 
     before = client.get(f"/equipment/{equipment['id']}").get_json()
-    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": 9999})
+    response = client.post("/rentals", json={"equipment_id": equipment["id"], "renter_id": 9999})
     assert 400 <= response.status_code < 500
     assert client.get("/rentals").get_json() == []
 
@@ -271,13 +275,13 @@ def test_add_rental_when_no_units_are_available(client):
     equipment = create_equipment(client, total_units=1)
     renter = create_renter(client)
 
-    create_rental(client, equipment_id = equipment["id"], renter_id = renter["id"])
+    create_rental(client, equipment_id=equipment["id"], renter_id=renter["id"])
 
     equipment_before = client.get(f"/equipment/{equipment['id']}").get_json()
     rentals_before = client.get("/rentals").get_json()
     assert equipment_before["available_units"] == 0
 
-    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"]})
+    response = client.post("/rentals", json={"equipment_id": equipment["id"], "renter_id": renter["id"]})
     assert 400 <= response.status_code < 500
 
     # Neither the rental list nor the equipment record should change
@@ -297,7 +301,7 @@ def test_return_rented_equipment(client):
     equipment = create_equipment(client, total_units=3)
     renter = create_renter(client)
 
-    rental = create_rental(client, equipment_id = equipment["id"], renter_id=renter["id"])
+    rental = create_rental(client, equipment_id=equipment["id"], renter_id=renter["id"])
 
     before_return = client.get(f"/equipment/{equipment['id']}").get_json()
     assert before_return["available_units"] == 2
@@ -328,7 +332,7 @@ def test_return_rented_equipment_twice(client):
     equipment = create_equipment(client, total_units=2)
     renter = create_renter(client)
 
-    rental = create_rental(client, equipment_id = equipment["id"], renter_id = renter["id"])
+    rental = create_rental(client, equipment_id=equipment["id"], renter_id=renter["id"])
 
     first_return = client.put(f"/rentals/{rental['id']}/return")
     assert first_return.status_code == 200
@@ -372,8 +376,8 @@ def test_list_rentals(client):
     first_renter = create_renter(client, name = "Alice", email = "alice@example.com")
     second_renter = create_renter(client, name = "Bob", email = "bob@example.com")
     
-    first = create_rental(client, equipment_id = equipment["id"], renter_id = first_renter["id"])
-    second = create_rental(client, equipment_id = equipment["id"], renter_id = second_renter["id"])
+    first = create_rental(client, equipment_id=equipment["id"], renter_id=first_renter["id"])
+    second = create_rental(client, equipment_id=equipment["id"], renter_id=second_renter["id"])
 
     response = client.get("/rentals")
     assert response.status_code == 200
@@ -392,10 +396,10 @@ def test_filter_rentals_by_equipment_id(client):
     second_equipment = create_equipment(client, name = "Tent", category = "Camping")
 
     renter = create_renter(client)
-    first_rental = create_rental(client, equipment_id = first_equipment["id"], renter_id = renter["id"])
-    second_rental = create_rental(client, equipment_id = second_equipment["id"], renter_id = renter["id"])
+    first_rental = create_rental(client, equipment_id=first_equipment["id"], renter_id=renter["id"])
+    second_rental = create_rental(client, equipment_id=second_equipment["id"], renter_id=renter["id"])
 
-    response = client.get(f"/rentals?equipment_id = {first_equipment['id']}")
+    response = client.get(f"/rentals?equipment_id={first_equipment['id']}")
     assert response.status_code == 200
 
     listed = response.get_json()
@@ -408,7 +412,7 @@ def test_filter_rentals_by_equipment_id(client):
 def test_filter_rentals_by_renter_id(client):
     """ Supplying renter_id only returns rentals belonging to that renter.
 
-        The two IDs are purposefully different: renter_id = 2 and equipment_id = 1.
+        The two IDs are purposefully different: renter_id=2 and equipment_id=1.
         This test might expose the current implementation's bug, which compares
         equipment_id with the renter_id query parameter.
     """
@@ -418,13 +422,13 @@ def test_filter_rentals_by_renter_id(client):
     second_renter = create_renter(client, name = "Bob", email = "bob@example.com")
 
     # Created a rental with renter 2 and equipment 1
-    target_rental = create_rental(client, equipment_id = equipment["id"], renter_id = second_renter["id"])
+    target_rental = create_rental(client, equipment_id=equipment["id"], renter_id=second_renter["id"])
     assert second_renter["id"] != equipment["id"]
 
     # Created a rental that should not appear in these results
-    other_rental = create_rental(client, equipment_id = equipment["id"], renter_id = first_renter["id"])
+    other_rental = create_rental(client, equipment_id=equipment["id"], renter_id=first_renter["id"])
 
-    response = client.get(f"/rentals?renter_id = {second_renter['id']}")
+    response = client.get(f"/rentals?renter_id={second_renter['id']}")
     assert response.status_code == 200
 
     listed = response.get_json()
@@ -445,14 +449,14 @@ def test_filter_rentals_by_both_ids(client):
     first_renter = create_renter(client, name = "Alice", email = "alice@example.com")
     second_renter = create_renter(client, name = "Bob", email = "bob@example.com")
 
-    target = create_rental(client, equipment_id = first_equipment["id"], renter_id = first_renter["id"])
+    target = create_rental(client, equipment_id=first_equipment["id"], renter_id=first_renter["id"])
 
-    create_rental(client, equipment_id = first_equipment["id"], renter_id = second_renter["id"])
-    create_rental(client, equipment_id = second_equipment["id"], renter_id = first_renter["id"])
+    create_rental(client, equipment_id=first_equipment["id"], renter_id=second_renter["id"])
+    create_rental(client, equipment_id=second_equipment["id"], renter_id=first_renter["id"])
 
     response = client.get(
-        f"/rentals?equipment_id = {first_equipment['id']}"
-        f"&renter_id = {first_renter['id']}"
+        f"/rentals?equipment_id={first_equipment['id']}"
+        f"&renter_id={first_renter['id']}"
     )
     assert response.status_code == 200
 
@@ -483,7 +487,7 @@ def test_mark_equipment_out_of_service(client):
     equipment = create_equipment(client)
     url = f"/equipment/{equipment['id']}/status"
     
-    response = client.patch(url, json = {"is_available": False})
+    response = client.patch(url, json={"is_available": False})
     assert response.status_code == 200
     assert response.get_json()["is_available"] is False
     
@@ -493,7 +497,7 @@ def test_mark_equipment_out_of_service(client):
     assert get_response.get_json()["is_available"] is False
     
     # Restore equipment to the in-service status
-    restored = client.patch(url, json = {"is_available": True})
+    restored = client.patch(url, json={"is_available": True})
     assert restored.status_code == 200
     assert restored.get_json()["is_available"] is True
 
@@ -503,7 +507,7 @@ def test_mark_nonexistent_equipment_out_of_serivce(client):
         equipment will return a 404.
     """
     
-    response = client.patch("/equipment/9999/status", json = {"is_available": False})
+    response = client.patch("/equipment/9999/status", json={"is_available": False})
     assert response.status_code == 404
     assert "error" in response.get_json()
 
@@ -524,7 +528,7 @@ def test_equipment_status_invalid_value(client, bad_payload):
     
     equipment = create_equipment(client)
 
-    response = client.patch(f"/equipment/{equipment['id']}/status", json = bad_payload)
+    response = client.patch(f"/equipment/{equipment['id']}/status", json=bad_payload)
     assert response.status_code == 400
 
     get_response = client.get(f"/equipment/{equipment['id']}")
@@ -539,12 +543,12 @@ def test_checkout_out_of_service_equipment_rejected(client):
     equipment = create_equipment(client, total_units=3)
     renter = create_renter(client)
 
-    status_response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    status_response = client.patch(f"/equipment/{equipment['id']}/status", json={"is_available": False})
     assert status_response.status_code == 200
     
     before_units = client.get(f"/equipment/{equipment['id']}/availability").get_json()["available_units"]
     
-    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
+    response = client.post("/rentals", json={"equipment_id": equipment["id"], "renter_id": renter["id"],})
     assert response.status_code == 409
     assert "error" in response.get_json()
 
@@ -567,13 +571,13 @@ def test_checkout_restored_equipment_succeeds(client):
     equipment = create_equipment(client)
     renter = create_renter(client)
 
-    out_of_service = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False})
+    out_of_service = client.patch(f"/equipment/{equipment['id']}/status", json={"is_available": False})
     assert out_of_service.status_code == 200
     
-    restored = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": True})
+    restored = client.patch(f"/equipment/{equipment['id']}/status", json={"is_available": True})
     assert restored.status_code == 200
 
-    response = client.post("/rentals", json = {"equipment_id": equipment["id"], "renter_id": renter["id"],})
+    response = client.post("/rentals", json={"equipment_id": equipment["id"], "renter_id": renter["id"],})
     assert response.status_code == 201
     
     
@@ -610,7 +614,7 @@ def test_ui_checkout_out_of_service_equipment_is_rejected(client):
     renter = create_renter(client)
 
     # Mark equipment out of service
-    status_response = client.patch(f"/equipment/{equipment['id']}/status", json = {"is_available": False},)
+    status_response = client.patch(f"/equipment/{equipment['id']}/status", json={"is_available": False},)
     assert status_response.status_code == 200
 
     before_units = client.get(f"/equipment/{equipment['id']}/availability").get_json()["available_units"]
