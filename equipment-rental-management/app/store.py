@@ -10,10 +10,6 @@ equipment = {}
 renters = {}
 rentals = {}
 
-# Malformed-rental warnings from the daily reminder check, keyed by rental id
-# (one per rental). Each stays posted on the rentals page until dismissed.
-reminder_warnings = {}
-
 _next_ids = {"equipment": 1, "renter": 1, "rental": 1}
 
 
@@ -28,5 +24,4 @@ def reset():
     equipment.clear()
     renters.clear()
     rentals.clear()
-    reminder_warnings.clear()
     _next_ids.update(equipment=1, renter=1, rental=1)
