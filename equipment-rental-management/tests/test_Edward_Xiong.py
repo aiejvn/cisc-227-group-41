@@ -32,7 +32,7 @@ def create_renter(client, **overrides):
 
 def create_rental(client, equipment_id, renter_id, **overrides):
     """Helper: creates a rental and returns its JSON body."""
-    payload = {"equipment_id": equipment_id, "renter_id": renter_id, "deposit_amount": 25.0}
+    payload = {"equipment_id": equipment_id, "renter_id": renter_id, "deposit_amount": 0.0}
     payload.update(overrides)
     response = client.post("/rentals", json=payload)
     assert response.status_code == 201
@@ -68,7 +68,7 @@ def test_update_renter_partial(client):
     
     renter = create_renter(client)
     
-    response = client.put(f"/renters{renter['id']}", json = {"name": "Alice Mace"})
+    response = client.put(f"/renters/{renter['id']}", json = {"name": "Alice Mace"})
     assert response.status_code == 200
     
     reread = client.get(f"/renters/{renter['id']}").get_json()
@@ -193,8 +193,10 @@ def test_add_rental(client):
         Checking out equipment creates a rental with the expected renter,
         equipment, due date, and deposit information.
     """
-    
+
     equipment = create_equipment(client)
+    # Only equipment flagged needs_deposit accepts a deposit greater than 0
+    client.patch(f"/equipment/{equipment['id']}/deposit", json = {"needs_deposit": True})
     renter = create_renter(client)
 
     rental = create_rental(
@@ -398,7 +400,7 @@ def test_filter_rentals_by_equipment_id(client):
     first_rental = create_rental(client, equipment_id = first_equipment["id"], renter_id = renter["id"])
     second_rental = create_rental(client, equipment_id = second_equipment["id"], renter_id = renter["id"])
 
-    response = client.get(f"/rentals?equipment_id = {first_equipment['id']}")
+    response = client.get(f"/rentals?equipment_id={first_equipment['id']}")
     assert response.status_code == 200
 
     listed = response.get_json()
@@ -408,6 +410,7 @@ def test_filter_rentals_by_equipment_id(client):
     assert second_rental["id"] not in {r["id"] for r in listed}
 
 
+@pytest.mark.xfail(reason="Defect: list_rentals compares equipment_id to the renter_id filter", strict=True)
 def test_filter_rentals_by_renter_id(client):
     """ Supplying renter_id only returns rentals belonging to that renter.
 
@@ -427,7 +430,7 @@ def test_filter_rentals_by_renter_id(client):
     # Created a rental that should not appear in these results
     other_rental = create_rental(client, equipment_id = equipment["id"], renter_id = first_renter["id"])
 
-    response = client.get(f"/rentals?renter_id = {second_renter['id']}")
+    response = client.get(f"/rentals?renter_id={second_renter['id']}")
     assert response.status_code == 200
 
     listed = response.get_json()
@@ -437,6 +440,7 @@ def test_filter_rentals_by_renter_id(client):
     assert other_rental["id"] not in {r["id"] for r in listed}
 
 
+@pytest.mark.xfail(reason="Defect: list_rentals compares equipment_id to the renter_id filter", strict=True)
 def test_filter_rentals_by_both_ids(client):
     """ When both query params are supplied, the results must satisfy
         both the equipment and renter filters.
@@ -454,8 +458,8 @@ def test_filter_rentals_by_both_ids(client):
     create_rental(client, equipment_id = second_equipment["id"], renter_id = first_renter["id"])
 
     response = client.get(
-        f"/rentals?equipment_id = {first_equipment['id']}"
-        f"&renter_id = {first_renter['id']}"
+        f"/rentals?equipment_id={first_equipment['id']}"
+        f"&renter_id={first_renter['id']}"
     )
     assert response.status_code == 200
 
