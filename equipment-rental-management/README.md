@@ -80,6 +80,21 @@ The service status applies to the entire equipment record rather than
 individual physical units. For example, marking an equipment entry with five
 units as out of service prevents all five units from being rented.
 
+## Return Reminders
+
+When started with `python run.py`, the app sends a return reminder to the
+renter's email for every unreturned rental due that day. It checks once at
+startup and then every 24 hours. Reminders go through `notification_service`,
+so nothing is actually emailed.
+
+- **Malformed rentals** (missing renter, blank email, or missing equipment) are
+  not reminded. A warning is logged and shown on the Rentals page until
+  dismissed with its **X** button.
+- **Failed sends** are logged as errors; the check continues with the next
+  rental.
+- Reminders only start from `run.py`. Other entry points (e.g. `flask run`)
+  must call `start_reminder_timer()` themselves.
+
 ## Entities
 
 - **Equipment**: `id, name, category, total_units, available_units, is_available, needs_deposit`
@@ -107,6 +122,10 @@ units as out of service prevents all five units from being rented.
 | PUT | `/rentals/<id>/return` | Return rented equipment |
 | GET | `/rentals?renter_id=&equipment_id=` | Look up rentals |
 
+## UI Endpoints
+
+| POST | `/ui/rentals/warnings/<rental_id>/dismiss` | Dismiss a reminder warning on the Rentals page (UI route; redirects to `/ui/rentals`) |
+
 ## Equipment Status Response Codes
 
 | Status Code | Meaning |
@@ -122,5 +141,5 @@ units as out of service prevents all five units from being rented.
 pytest
 ```
 
-Deposit tests are in `tests/test_Kevin_Wang.py`.
+Deposit tests are in `tests/test_Kevin_Wang.py`. Return reminder and Web UI route tests are in `tests/test_a3_Kevin_Wang.py`.
 
